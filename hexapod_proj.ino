@@ -11,7 +11,8 @@
 #include "serial_remote.h"
 #include "servo_wave.h"
 #include "set_pos.h"
-#include "walkcycle.h"
+#include "walkcycle_serial.h"
+#include "walkcycle_remote.h"
 
 // Program states
 enum ProgramState {
@@ -19,7 +20,8 @@ enum ProgramState {
   SERIAL_CONTROL,
   WAVE_PROGRAM,
   IK_PROGRAM,
-  WALKCYCLE,
+  WALKCYCLE_SERIAL,
+  WALKCYCLE_REMOTE,
   // Add more program states here as you create them
 };
 
@@ -30,8 +32,8 @@ void printMainMenu() {
   Serial.println("1 - Serial Servo Control");
   Serial.println("2 - Sinus Wave");
   Serial.println("3 - Inverse kinematics");
-  Serial.println("4 - Walkcycle");
-  Serial.println("X - Exit current program");
+  Serial.println("4 - Walkcycle Serial");
+  Serial.println("5 - Walkcycle Remote");
   Serial.println("====================");
 }
 
@@ -62,20 +64,21 @@ void handleMainMenu() {
         break;
         
       case '2':
-        // Setup for future program 2
         currentState = WAVE_PROGRAM;
         setupWaveProgram();
         break;
         
       case '3':
-        // Setup for future program 3
         currentState = IK_PROGRAM;
         setupIKPostitioning();
         break;
       case '4':
-        // Setup for future program 3
-        currentState = WALKCYCLE;
-        setupWalkCycle();
+        currentState = WALKCYCLE_SERIAL;
+        setupWalkcycleSerial();
+        break;
+      case '5':
+        currentState = WALKCYCLE_REMOTE;
+        setupWalkcycleRemote();
         break;
 
         
@@ -123,9 +126,17 @@ switch (currentState) {
       }
       break;
 
-    case WALKCYCLE:
-      if (!walkCycleUpdate()) { // If update_serial returns false, exit to main menu
-        Serial.println("walkCycle exited, returning to menu");
+    case WALKCYCLE_SERIAL:
+      if (!walkcycleSerialUpdate()) { // If update_serial returns false, exit to main menu
+        Serial.println("walkCycleSerial exited, returning to menu");
+        currentState = MAIN_MENU;
+        printMainMenu();
+      }
+      break;
+
+    case WALKCYCLE_REMOTE:
+      if (!walkcycleRemoteUpdate()) { // If update_serial returns false, exit to main menu
+        Serial.println("walkCycleRemote exited, returning to menu");
         currentState = MAIN_MENU;
         printMainMenu();
       }
