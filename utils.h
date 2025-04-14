@@ -10,15 +10,8 @@
 Adafruit_PWMServoDriver pwm0 = Adafruit_PWMServoDriver(0x40, Wire);
 Adafruit_PWMServoDriver pwm1 = Adafruit_PWMServoDriver(0x41, Wire);
 
-struct Vec3{
-  float x;
-  float y;
-  float z;
-
-  Vec3 operator*(float other){
-    return Vec3{other * x, other * y, other * z};
-  }
-};
+//#include "Vec3.h" //not needed du eto quat including it
+#include "quat.h"
 
 void setupPwm(){
   Wire.begin(I2C_SDA, I2C_SCL);
