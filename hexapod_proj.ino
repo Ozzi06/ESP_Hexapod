@@ -1,3 +1,4 @@
+//hexapod_proj.ino
 // Suggested servo limits (optional)
 #define SERVOMIN  175 //-71 degrees (assume -76 degrees)
 #define SERVOMAX  535 //81 degrees (Assume 76 degrees)
@@ -13,6 +14,7 @@
 #include "set_pos.h"
 #include "walkcycle_serial.h"
 #include "walkcycle_remote.h"
+#include "kinematics_debug.h"
 
 // Program states
 enum ProgramState {
@@ -22,6 +24,7 @@ enum ProgramState {
   IK_PROGRAM,
   WALKCYCLE_SERIAL,
   WALKCYCLE_REMOTE,
+  KINEMATICS_DEBUG,
   // Add more program states here as you create them
 };
 
@@ -34,6 +37,7 @@ void printMainMenu() {
   Serial.println("3 - Inverse kinematics");
   Serial.println("4 - Walkcycle Serial");
   Serial.println("5 - Walkcycle Remote");
+  Serial.println("6 - Kinematics Debug");
   Serial.println("====================");
 }
 
@@ -80,7 +84,10 @@ void handleMainMenu() {
         currentState = WALKCYCLE_REMOTE;
         setupWalkcycleRemote();
         break;
-
+      case '6':
+        currentState = KINEMATICS_DEBUG;
+        setup_kinematics_debug();
+        break;
         
       case 'X':
         // Already in main menu
@@ -136,6 +143,14 @@ switch (currentState) {
 
     case WALKCYCLE_REMOTE:
       if (!walkcycleRemoteUpdate()) { // If update_serial returns false, exit to main menu
+        Serial.println("walkCycleRemote exited, returning to menu");
+        currentState = MAIN_MENU;
+        printMainMenu();
+      }
+      break;
+
+    case KINEMATICS_DEBUG:
+      if (!update_kinematics_debug()) { // If update_serial returns false, exit to main menu
         Serial.println("walkCycleRemote exited, returning to menu");
         currentState = MAIN_MENU;
         printMainMenu();

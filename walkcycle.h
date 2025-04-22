@@ -4,6 +4,8 @@
 #include "ik.h"
 #include "utils.h"
 
+#include "robot_spec.h"
+
 // Walk cycle parameters
 struct WalkParams {
   float stepHeight = 2.0f;     // Maximum height of step (cm)

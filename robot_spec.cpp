@@ -1,31 +1,40 @@
 #include "robot_spec.h"
 
-// Define constants
-const float COXA_LENGTH = 7.0f;
+// Leg mechanical parameters (in cm)
+const float COXA_LENGTH  = 7.0f; // Length from hip to knee joint
+const float FEMUR_LENGTH = 10.0; // Length from knee to ankle joint
+const float TIBIA_LENGTH = 11.6; // Length from ankle to foot
+
+// Joint angle limits (in radians)
+const float COXA_MIN_ANGLE  =  (-60 * M_PI / 180.0);
+const float COXA_MAX_ANGLE  =   (60 * M_PI / 180.0);
+const float FEMUR_MIN_ANGLE =  (-70 * M_PI / 180.0);
+const float FEMUR_MAX_ANGLE =   (70 * M_PI / 180.0);
+const float TIBIA_MIN_ANGLE =  (-70 * M_PI / 180.0);
+const float TIBIA_MAX_ANGLE =   (70 * M_PI / 180.0);
+
 // ... other lengths and angle limits ...
 
+//Leg names
+const char* leg_names[LEG_COUNT] = {"Back Right", "Mid Right", "Front Right", "Back Left", "Mid Left", "Front Left"};
+
 const Vec3 legOriginOffset[LEG_COUNT] = {
-    { 10.0f,  10.0f, 0.0f}, // Leg 0 (Front Right)
-    { 12.0f,   0.0f, 0.0f}, // Leg 1 (Mid Right)
-    { 10.0f, -10.0f, 0.0f}, // Leg 2 (Rear Right)
-    {-10.0f,  10.0f, 0.0f}, // Leg 3 (Front Left)
-    {-12.0f,   0.0f, 0.0f}, // Leg 4 (Mid Left)
-    {-10.0f, -10.0f, 0.0f}  // Leg 5 (Rear Left) - ADJUST THESE VALUES!
+    {  0.0f,   0.0f, 0.0f}, // Leg 0(BR)
+    {  0.0f,   0.0f, 0.0f}, // Leg 1(CR)
+    {  0.0f,   0.0f, 0.0f}, // Leg 2(FR)
+    {  0.0f,   0.0f, 0.0f}, // Leg 3(BL)
+    {  0.0f,   0.0f, 0.0f}, // Leg 4(CL)
+    {  0.0f,   0.0f, 0.0f}  // Leg 5(FL)
 };
 
 const float legMountingAngle[LEG_COUNT] = {
-     M_PI / 4.0f, // Leg 0 (+45 deg) - Assuming your +45 deg example
-     0.0f,        // Leg 1 (Straight)
-    -M_PI / 4.0f, // Leg 2 (-45 deg)
-    -M_PI / 4.0f, // Leg 3 (-45 deg mirrored from Leg 0) - Check convention!
-     0.0f,        // Leg 4 (Straight)
-     M_PI / 4.0f  // Leg 5 (+45 deg mirrored from Leg 2) - Check convention! - ADJUST THESE VALUES!
-     // Ensure angles match your X=Right, Y=Fwd convention.
-};
-
-const bool isLeftLeg[LEG_COUNT] = {
-    false, false, false, // Right legs
-    true,  true,  true   // Left legs
+    -1*M_PI / 4.0f, // Leg 0(BR)
+     0*M_PI / 4.0f, // Leg 1(CR)
+    +1*M_PI / 4.0f, // Leg 2(FR)
+    
+    -3*M_PI / 4.0f, // Leg 3(BL)
+    +2*M_PI / 4.0f, // Leg 4(CL)
+    +3*M_PI / 4.0f  // Leg 5(FL)
 };
 
 // Define global state variables (initial values)

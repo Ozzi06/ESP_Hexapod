@@ -1,4 +1,3 @@
-      
 #ifndef ROBOT_SPEC_H
 #define ROBOT_SPEC_H
 
@@ -21,14 +20,15 @@ extern const float FEMUR_MAX_ANGLE;
 extern const float TIBIA_MIN_ANGLE;
 extern const float TIBIA_MAX_ANGLE;
 
+//Leg names
+extern const char* leg_names[LEG_COUNT];
+
 // Leg Geometry & Configuration
 // Position of each leg's coxa joint relative to the Body Frame origin (X=Right, Y=Fwd, Z=Up)
 extern const Vec3 legOriginOffset[LEG_COUNT];
 // Mounting angle (yaw/Z-rotation) of each leg relative to the Body Frame's Y-axis (radians)
 // Example: 0 = straight forward/backward, +PI/4 = 45deg right, -PI/4 = 45deg left
 extern const float legMountingAngle[LEG_COUNT];
-// Flags for mirroring logic (true if leg is on the robot's left side)
-extern const bool isLeftLeg[LEG_COUNT];
 
 // Servo channel assignments per leg [leg][joint: 0=coxa, 1=femur, 2=tibia]
 // Consider moving this here too for complete spec centralization?

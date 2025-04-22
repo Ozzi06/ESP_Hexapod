@@ -1,25 +1,10 @@
-// ik_servo.h
-#ifndef IK_SERVO_H
-#define IK_SERVO_H
+// ik.h
+#ifndef IK_H
+#define IK_H
 
 #include "utils.h"
 #include <math.h>
-
-// Leg mechanical parameters (in cm)
-#define COXA_LENGTH  7.0    // Length from hip to knee joint
-#define FEMUR_LENGTH 10.0    // Length from knee to ankle joint
-#define TIBIA_LENGTH 11.6   // Length from ankle to foot
-
-// Joint angle limits (in radians)
-#define COXA_MIN_ANGLE    (-60 * M_PI / 180.0)
-#define COXA_MAX_ANGLE     (60 * M_PI / 180.0)
-#define FEMUR_MIN_ANGLE   (-70 * M_PI / 180.0)
-#define FEMUR_MAX_ANGLE    (70 * M_PI / 180.0)
-#define TIBIA_MIN_ANGLE   (-70 * M_PI / 180.0)
-#define TIBIA_MAX_ANGLE    (70 * M_PI / 180.0)
-
-#define LEG_COUNT 1
-
+#include "robot_spec.h"
 // Servo channel assignments per leg (adjust based on your setup)
 const uint8_t LEG_SERVOS[LEG_COUNT][3] = {  // [leg][joint] where joints are 0:coxa, 1:femur, 2:tibia
   {9, 10, 11},   // Leg 0 servos
