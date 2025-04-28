@@ -8,8 +8,6 @@ void setupWalkcycleSerial() {
   
   Serial.println("\n==== Leg Walk Cycle Control ====");
   Serial.println("Commands:");
-  Serial.println("L[leg] - Select leg (0-3)");
-  Serial.println("A - Toggle all legs");
   Serial.println("x[value] - Set x velocity (cm/s)");
   Serial.println("y[value] - Set y velocity (cm/s)");
   Serial.println("z[value] - Set z velocity (cm/s)");
@@ -47,28 +45,6 @@ bool processWalkCommands() {
           walkCycleRunning = true;
           globalPhase = 0.0f;
           Serial.println("Walk cycle started");
-          break;
-          
-        case 'L': // Select leg
-          {
-            uint8_t leg = input.toInt();
-            if (leg < LEG_COUNT) {
-              currentLeg = leg;
-              Serial.print("Selected leg ");
-              Serial.println(leg);
-            }
-          }
-          break;
-          
-        case 'A': // Toggle all legs
-          {
-            bool newState = !legCycleData[0].active; // Toggle based on first leg
-            for (uint8_t i = 0; i < LEG_COUNT; i++) {
-              legCycleData[i].active = newState;
-            }
-            Serial.print("All legs are now ");
-            Serial.println(newState ? "active" : "inactive");
-          }
           break;
           
         case 'x': // Set X velocity

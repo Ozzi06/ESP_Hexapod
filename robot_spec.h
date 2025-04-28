@@ -31,13 +31,22 @@ extern const Vec3 legOriginOffset[LEG_COUNT];
 extern const float legMountingAngle[LEG_COUNT];
 
 // Servo channel assignments per leg [leg][joint: 0=coxa, 1=femur, 2=tibia]
-// Consider moving this here too for complete spec centralization?
-// extern const uint8_t LEG_SERVOS[LEG_COUNT][3];
+// Maps logical leg/joint to the physical PCA9685 channel (0-15 range, board dependent)
+extern const uint8_t LEG_SERVOS[LEG_COUNT][3];
 
 // --- Global State Variables ---
 // Desired body pose relative to the Walk Frame (Walk Frame: X=Right, Y=Fwd, Z=Up, fixed orientation)
 extern Vec3 bodyPositionOffset;    // Body center translation from Walk Frame origin
 extern Quaternion bodyOrientation; // Body orientation relative to Walk Frame axes
+extern Vec3 bodyVelocity; // Desired body velocity relative to the Walk Frame (cm/s)
+
+    
+
+// --- Default Stance Positions ---
+// Neutral position for each foot relative to the Walk Frame origin (X=Right, Y=Fwd, Z=Up)
+// Used as the center point for stepping calculations. Z=0 usually means foot on the ground.
+extern const Vec3 defaultFootPositionWalk[LEG_COUNT];
+
 
 #endif // ROBOT_SPEC_H
 

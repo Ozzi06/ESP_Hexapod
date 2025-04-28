@@ -14,7 +14,6 @@
 #include "set_pos.h"
 #include "walkcycle_serial.h"
 #include "walkcycle_remote.h"
-#include "kinematics_debug.h"
 
 // Program states
 enum ProgramState {
@@ -37,7 +36,6 @@ void printMainMenu() {
   Serial.println("3 - Inverse kinematics");
   Serial.println("4 - Walkcycle Serial");
   Serial.println("5 - Walkcycle Remote");
-  Serial.println("6 - Kinematics Debug");
   Serial.println("====================");
 }
 
@@ -83,10 +81,6 @@ void handleMainMenu() {
       case '5':
         currentState = WALKCYCLE_REMOTE;
         setupWalkcycleRemote();
-        break;
-      case '6':
-        currentState = KINEMATICS_DEBUG;
-        setup_kinematics_debug();
         break;
         
       case 'X':
@@ -143,14 +137,6 @@ switch (currentState) {
 
     case WALKCYCLE_REMOTE:
       if (!walkcycleRemoteUpdate()) { // If update_serial returns false, exit to main menu
-        Serial.println("walkCycleRemote exited, returning to menu");
-        currentState = MAIN_MENU;
-        printMainMenu();
-      }
-      break;
-
-    case KINEMATICS_DEBUG:
-      if (!update_kinematics_debug()) { // If update_serial returns false, exit to main menu
         Serial.println("walkCycleRemote exited, returning to menu");
         currentState = MAIN_MENU;
         printMainMenu();
