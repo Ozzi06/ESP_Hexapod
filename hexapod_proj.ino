@@ -5,6 +5,12 @@
 #define SERVOMIDDLE 355
 #define SERVO_FREQ 50
 
+#define OSSIAN_HEMMA
+
+#include <WiFi.h>
+#include <WiFiUdp.h>
+// --- Global Variables ---
+WiFiUDP udp;
 
 #include "utils.h"
 
@@ -23,7 +29,6 @@ enum ProgramState {
   IK_PROGRAM,
   WALKCYCLE_SERIAL,
   WALKCYCLE_REMOTE,
-  KINEMATICS_DEBUG,
   // Add more program states here as you create them
 };
 
@@ -39,9 +44,26 @@ void printMainMenu() {
   Serial.println("====================");
 }
 
+
+
 void setup() {
   Serial.begin(115200);
-  
+  Serial.printf("Connecting to %s ", ssid);
+  WiFi.begin(ssid, password);
+  // ... (WiFi connection loop - same as before) ...
+  int wifi_retries = 0;
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+    wifi_retries++;
+    if (wifi_retries > 20) {
+        Serial.println("\nWiFi Connection Failed! Halting.");
+        while(1) { delay(1000); }
+    }
+  }
+  Serial.println(" Connected!");
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
   setupPwm();
 
   printMainMenu();
@@ -149,4 +171,13 @@ switch (currentState) {
 
 void loop() {
   stateMachine();
+  #ifdef OSSIAN_HEMMA
+    // Check if WiFi is connected before attempting to send
+    if (WiFi.status() == WL_CONNECTED && (millis() % 20) == 0) {
+        udp.beginPacket(angleBroadcastIp, angleBroadcastPort);
+        // Send the raw bytes of the entire latestServoAngles array
+        udp.write((uint8_t*)latestServoAngles, sizeof(latestServoAngles));
+        udp.endPacket();
+    }
+  #endif // OSSIAN_HEMMA
 }

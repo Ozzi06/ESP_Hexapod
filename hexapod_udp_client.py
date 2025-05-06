@@ -3,85 +3,78 @@
 import socket
 import struct
 import time
-import math # For isnan if needed later
+import math
+
+# ### Define LEG_COUNT - should match ESP32 ###
+LEG_COUNT = 6
 
 class HexapodUDPClient:
     """
     A client class to send FullControlPacket UDP datagrams to the ESP32 hexapod.
-
     Manages packet structure, sequence numbers, timestamps, and UDP sending.
     """
-
-    # Define the packet structure format string (Little Endian)
-    # Matches the C++ struct:
-    # uint32 identifier      (I)
-    # uint64 timestampMs     (Q)
-    # uint32 sequenceNumber  (I)
-    # uint8  controlFlags    (B)
-    # float  velocityX       (f)
-    # float  velocityY       (f)
-    # float  velocityY       (f)
-    # float  angularVelYaw   (f)
-    # float  stepHeight      (f)
-    # float  stepFrequency   (f)
-    # float  dutyFactor      (f)
-    # float  bodyPosX        (f)
-    # float  bodyPosY        (f)
-    # float  bodyPosZ        (f)
-    # float  bodyOrientW     (f)
-    # float  bodyOrientX     (f)
-    # float  bodyOrientY     (f)
-    # float  bodyOrientZ     (f)
-    # Total: 73 bytes
-    _PACKET_FORMAT = '<I Q I B fff f fff fff ffff'
-    _PACKET_SIZE = 73 # Should match struct.calcsize(_PACKET_FORMAT)
+    # --- Updated Packet Format including base foot positions ---
+    # '<' = little-endian
+    # Metadata: I Q I (16 bytes)
+    # Control State: B (1 byte)
+    # Locomotion: fff f fff (7 floats = 28 bytes)
+    # Body Pose: fff ffff (7 floats = 28 bytes)
+    # Base Foot Pos: f * (LEG_COUNT * 3) (18 floats = 72 bytes)
+    _PACKET_FORMAT = '<I Q I B fff f fff fff ffff' + 'f' * (LEG_COUNT * 3)
+    _PACKET_SIZE = struct.calcsize(_PACKET_FORMAT) # 16 + 1 + 28 + 28 + 72 = 145 bytes
     _PACKET_IDENTIFIER = 0xFEEDF00D
 
-    # Bit masks for controlFlags
     _FLAG_WALK_RUNNING = (1 << 0)
 
-    def __init__(self, target_ip: str, target_port: int):
-        """
-        Initializes the Hexapod UDP Client.
-
-        Args:
-            target_ip: The IP address of the ESP32 hexapod.
-            target_port: The UDP port the ESP32 is listening on (e.g., 5005).
-        """
+    def __init__(self, target_port: int, use_broadcast: bool = True, initial_base_pos=None): # ### Added initial_base_pos ###
         if struct.calcsize(self._PACKET_FORMAT) != self._PACKET_SIZE:
-            raise ValueError(f"Packet format size mismatch! Expected {self._PACKET_SIZE}, got {struct.calcsize(self._PACKET_FORMAT)}")
+             raise ValueError(f"Packet format size mismatch! Expected {self._PACKET_SIZE}, got {struct.calcsize(self._PACKET_FORMAT)}")
 
-        self.target_address = (target_ip, target_port)
+        print(f"Initializing UDP Client. Expected packet size: {self._PACKET_SIZE} bytes") # ### Moved print ###
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         self.sequence_number = 0
 
-        # --- Initialize internal state variables for the packet ---
-        # Metadata (managed internally)
+        if use_broadcast:
+            try:
+                self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                print("Broadcast enabled on socket.")
+            except OSError as e:
+                print(f"[Error] Could not enable broadcast on socket: {e}. Try running as Admin.")
+                # Don't necessarily exit, maybe it works anyway on some systems or user handles it
+            self.target_address = ('255.255.255.255', target_port)
+            print(f"Target address set to BROADCAST:{target_port}")
+        else:
+            raise NotImplementedError("Unicast mode requires providing a specific target IP.")
+
+        # --- Initialize internal state variables ---
         self._identifier = self._PACKET_IDENTIFIER
         self._timestamp_ms = 0
-        # Control State
         self._walk_running = False
-        # Locomotion Control (Walk Frame Relative)
-        self.velocity_x = 0.0         # Sideways cm/s (+X Right)
-        self.velocity_y = 0.0         # Forward/Backward cm/s (+Y Forward)
-        self.velocity_z = 0.0         # Vertical cm/s (+Z Up) - Usually 0
-        self.angular_velocity_yaw = 0.0 # Turning rad/s (+Yaw Left Turn)
-        # Gait Parameters
-        self.step_height = 3.0        # cm
-        self.step_frequency = 1.0     # Hz
-        self.duty_factor = 0.5        # 0.0 to 1.0
-        # Body Pose Control (Walk Frame Relative)
-        self.body_position_x = 0.0    # cm
-        self.body_position_y = 0.0    # cm
-        self.body_position_z = 10.0   # cm (Initial ride height)
-        # Body Orientation (Quaternion, Walk Frame Relative) - Identity initially
+        self.velocity_x = 0.0
+        self.velocity_y = 0.0
+        self.velocity_z = 0.0
+        self.angular_velocity_yaw = 0.0
+        self.step_height = 3.0
+        self.step_frequency = 1.0
+        self.duty_factor = 0.5
+        self.body_position_x = 0.0
+        self.body_position_y = 0.0
+        self.body_position_z = 10.0
         self.body_orientation_w = 1.0
         self.body_orientation_x = 0.0
         self.body_orientation_y = 0.0
         self.body_orientation_z = 0.0
 
-        print(f"Hexapod UDP Client initialized for {target_ip}:{target_port}")
+        # ### Store base foot positions (initialize with defaults from GUI) ###
+        if initial_base_pos and len(initial_base_pos) == LEG_COUNT and all(len(p) == 3 for p in initial_base_pos):
+             self.base_foot_pos = [list(pos) for pos in initial_base_pos] # Ensure mutable lists
+        else:
+             # Fallback default if none provided (should match ESP32 defaults ideally)
+             print("[Warning] Initial base positions not provided or invalid format. Using fallback.")
+             self.base_foot_pos = [[15.0, -13.0, 0.0], [20.0, 0.0, 0.0], [15.0, 13.0, 0.0],
+                                   [-15.0, -13.0, 0.0], [-20.0, 0.0, 0.0], [-15.0, 13.0, 0.0]]
+
+        print(f"Hexapod UDP Client initialized.")
         print(f"Expected packet size: {self._PACKET_SIZE} bytes")
 
     def _get_timestamp_ms(self) -> int:
@@ -161,12 +154,18 @@ class HexapodUDPClient:
         self.body_orientation_x = qx
         self.body_orientation_y = qy
         self.body_orientation_z = qz
+    def set_base_foot_position(self, leg_index: int, x: float, y: float, z: float):
+        """Updates the target base foot position for a single leg."""
+        if 0 <= leg_index < LEG_COUNT:
+            self.base_foot_pos[leg_index][0] = float(x)
+            self.base_foot_pos[leg_index][1] = float(y)
+            self.base_foot_pos[leg_index][2] = float(z)
+        else:
+            print(f"[Error] Invalid leg index {leg_index} in set_base_foot_position.")
+
 
     def pack_data(self) -> bytes:
-        """
-        Packs the current state into the binary format for sending.
-        Increments sequence number and updates timestamp.
-        """
+        """Packs the current state into the binary format for sending."""
         self.sequence_number += 1
         self._timestamp_ms = self._get_timestamp_ms()
 
@@ -174,39 +173,36 @@ class HexapodUDPClient:
         if self._walk_running:
             control_flags |= self._FLAG_WALK_RUNNING
 
-        # --- IMPORTANT: Ensure arguments are passed to struct.pack in the EXACT order
-        # defined by _PACKET_FORMAT ---
+        # ### Flatten the base_foot_pos list ###
+        flat_base_pos = [coord for pos in self.base_foot_pos for coord in pos]
+        if len(flat_base_pos) != LEG_COUNT * 3:
+             print(f"[Error] Internal base_foot_pos has incorrect size! Expected {LEG_COUNT*3}, got {len(flat_base_pos)}")
+             # Handle error - maybe send previous valid state or zeros?
+             # For now, let struct.pack potentially fail below.
+             flat_base_pos = [0.0] * (LEG_COUNT * 3) # Fallback to zeros
+
         try:
-            packed_data = struct.pack(
-                self._PACKET_FORMAT,
+            # Pack data in the order defined by _PACKET_FORMAT
+            args_to_pack = [
                 # Metadata
-                self._identifier,
-                self._timestamp_ms,
-                self.sequence_number,
+                self._identifier, self._timestamp_ms, self.sequence_number,
                 # Control State
                 control_flags,
                 # Locomotion Control
-                self.velocity_x,
-                self.velocity_y,
-                self.velocity_z,
-                self.angular_velocity_yaw,
-                self.step_height,
-                self.step_frequency,
-                self.duty_factor,
+                self.velocity_x, self.velocity_y, self.velocity_z,
+                self.angular_velocity_yaw, self.step_height, self.step_frequency, self.duty_factor,
                 # Body Pose Control
-                self.body_position_x,
-                self.body_position_y,
-                self.body_position_z,
-                self.body_orientation_w,
-                self.body_orientation_x,
-                self.body_orientation_y,
-                self.body_orientation_z
-            )
-            # Sanity check size after packing (optional)
+                self.body_position_x, self.body_position_y, self.body_position_z,
+                self.body_orientation_w, self.body_orientation_x, self.body_orientation_y, self.body_orientation_z
+            ]
+            # Append the flattened base positions
+            args_to_pack.extend(flat_base_pos)
+
+            packed_data = struct.pack(self._PACKET_FORMAT, *args_to_pack)
+
+            # Sanity check size after packing
             if len(packed_data) != self._PACKET_SIZE:
                  print(f"[Error] Packed data size unexpected! Expected {self._PACKET_SIZE}, got {len(packed_data)}")
-                 # Decide how to handle this - maybe raise an error or return None?
-                 # For now, just print the error. The send might fail or send corrupt data.
 
             return packed_data
         except struct.error as e:

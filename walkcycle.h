@@ -19,24 +19,19 @@ struct WalkParams {
 // --- Per-Leg Walk Cycle State ---
 // Stores state information specific to each leg's movement within the cycle.
 struct LegCycleData {
-  // Neutral position of the foot in the Walk Frame {X,Y,Z} (cm).
-  Vec3 basePositionWalk;
+  //the latest foot position calculated
+  Vec3 currentPosition;
 
   // Position of the foot in the Walk Frame {X,Y,Z} (cm) at the exact
   // moment it lifted off the ground to begin the swing phase.
   // Used as the starting point for swing trajectory interpolation.
-  Vec3 swingStartPositionWalk;
-
-  // Add other per-leg state if needed later (e.g., predicted touchdown)
+  Vec3 swingStartPosition;
 };
 
 extern WalkParams walkParams;
 extern LegCycleData legCycleData[LEG_COUNT];
 extern bool walkCycleRunning;
 extern float globalPhase;
-
-
-    
 
 // --- Function Declarations ---
 void setupWalkcycle();
@@ -65,13 +60,12 @@ void setupWalkcycle() {
 
   // Initialize leg cycle data based on default stance positions from robot_spec
   for (uint8_t i = 0; i < LEG_COUNT; i++) {
-    // Copy the configured default Walk Frame stance position
-    legCycleData[i].basePositionWalk = defaultFootPositionWalk[i];
 
-    // Initialize swing start position to the base position (neutral stance)
-    legCycleData[i].swingStartPositionWalk = legCycleData[i].basePositionWalk;
+    // Initialize positions to the base positions (neutral stance)
+    legCycleData[i].currentPosition = baseFootPositionWalk[i];
+    legCycleData[i].swingStartPosition = baseFootPositionWalk[i];
   }
-  Serial.println("Walk cycle initialized. Base positions loaded.");
+  Serial.println("Walk cycle initialized.");
   // Legs remain in their current position until walkCycleRunning=true and updateWalkCycle is called.
 }
 
@@ -84,10 +78,6 @@ float bell_curve_lift(float t) {
     t = clampf(t, 0.0f, 1.0f);
     // 6th order polynomial approximation of a bell curve (t^3 * (1-t)^3)
     // Scaled by 64 to peak at 1.0 when t=0.5
-    // (Derived from: 6 * t^2 - 4 * t^3 vs quintic, let's use a simpler one)
-    // Simpler version: 4*t*(1-t) -> peaks at 1.0, parabola
-    // Another common one: 0.5 * (1 - cos(t * PI)) -> Sine Ease In/Out
-    // Let's try the original polynomial provided:
     float t_minus_1 = 1.0f - t;
     return 64.0f * (t * t * t) * (t_minus_1 * t_minus_1 * t_minus_1);
 }
@@ -159,7 +149,7 @@ void updateWalkCycle(float dt) {
     // 3. Loop Through Each Leg
     for (uint8_t i = 0; i < LEG_COUNT; i++) {
         LegCycleData& leg = legCycleData[i]; // Get reference to this leg's state
-        Vec3 P_foot_walk;                    // Calculated target position in Walk Frame for this update
+        //Vec3 P_foot_walk;                    // Calculated target position in Walk Frame for this update
 
         // Determine leg-specific phase (can add offsets here later for different gaits)
         // Simple example: Tripod gait - Legs 0, 2, 4 step together, Legs 1, 3, 5 step together
@@ -168,69 +158,90 @@ void updateWalkCycle(float dt) {
         float legPhase = fmodf(globalPhase + phaseOffset, 1.0f);
         if (legPhase < 0.0f) legPhase += 1.0f;
 
-        // 4. Calculate Target Foot Position in Walk Frame (P_foot_walk)
+        // 4. Calculate Target Foot Position in Walk Frame
 
         if (legPhase < duty_factor) {
             // --- STANCE PHASE ---
-            // Foot is on the ground and should move backward relative to the body
-            // to remain stationary relative to the Walk Frame.
-
-            // Calculate the time elapsed *within* the current stance phase
-            float time_in_stance = legPhase * T_cycle;
-
-            // Determine where the foot *should* have landed at the beginning of this stance phase.
-            // This is the leg's neutral Walk Frame position adjusted forward by half the distance
-            // the body travels during a stance phase.
-            Vec3 stanceTouchdownPos = leg.basePositionWalk + (bodyVelocity * (T_stance * 0.5f));
+            // Foot is on the ground and should move backward relative to the body/Walk frame
+            // to remain stationary relative to the Ground.
 
             // Calculate the current foot position by moving backward from the touchdown point
             // based on how long the foot has been in stance.
-            P_foot_walk = stanceTouchdownPos - (bodyVelocity * time_in_stance);
+            leg.currentPosition = leg.currentPosition - (bodyVelocity * dt);
+                  
+            // Calculate the counter-rotation angle for this timestep
+            float delta_angle = -bodyAngularVelocityYaw * dt;
+            float cos_da = cosf(delta_angle);
+            float sin_da = sinf(delta_angle);
+            float original_x = leg.currentPosition.x;
+            float original_y = leg.currentPosition.y;
+            leg.currentPosition.x = original_x * cos_da - original_y * sin_da;
+            leg.currentPosition.y = original_x * sin_da + original_y * cos_da;
+            // Z remains unchanged by this 2D rotation
 
-            // Ensure the foot stays on the ground (use Z from base position)
-            P_foot_walk.z = leg.basePositionWalk.z;
+
 
             // **Critical:** Record the current position as the starting point for the *next* swing phase.
             // This captures where the foot actually was just before lifting off.
-            leg.swingStartPositionWalk = P_foot_walk;
+            leg.swingStartPosition = leg.currentPosition;
 
         } else {
             // --- SWING PHASE ---
-            // Foot is in the air, moving from swingStartPositionWalk to the next target touchdown position.
+            // Foot is in the air, moving from swingStartPosition to the next target touchdown position.
 
-            // Calculate the normalized progress through the swing phase (0.0 to 1.0)
+            // The normalized progress through the swing phase (0.0 to 1.0)
             float swingPhase = (legPhase - duty_factor) / (1.0f - duty_factor);
-            // Calculate the time elapsed *within* the current swing phase
+            
+            // The time elapsed *within* the current swing phase
             float time_in_swing = swingPhase * T_swing;
 
-            // Determine the target touchdown position for the *end* of this swing phase.
+            // The target touchdown position for the *end* of this swing phase.
             // This is where the *next* stance phase will begin. (Same calculation as stanceTouchdownPos above)
-            Vec3 targetTouchdownPos = leg.basePositionWalk + (bodyVelocity * (T_stance * 0.5f));
+            Vec3 linearTargetTouchdownPos = baseFootPositionWalk[i] + (bodyVelocity * (T_stance * 0.5f));
+
+            // Calculate the angle the body will rotate during half a stance phase
+            float rotationAngle = bodyAngularVelocityYaw * T_stance * 0.5f;
+            float cos_ra = cosf(rotationAngle);
+            float sin_ra = sinf(rotationAngle);
+
+            // Store original linear target X before calculating rotated target X
+            float original_linear_x = linearTargetTouchdownPos.x;
+            // Store original linear target Y (needed for correct Y calculation)
+            float original_linear_y = linearTargetTouchdownPos.y;
+
+            // Calculate the final rotated target touchdown position
+            Vec3 targetTouchdownPos; // Declare the final target variable
+            targetTouchdownPos.x = original_linear_x * cos_ra - original_linear_y * sin_ra;
+            targetTouchdownPos.y = original_linear_x * sin_ra + original_linear_y * cos_ra;
+
+            // Set the Z coordinate from the commanded base position (not rotated)
+            targetTouchdownPos.z = baseFootPositionWalk[i].z;
 
             // --- Interpolate Position ---
             // Z Position (Vertical Lift): Use the bell curve for smooth up-and-down motion.
             float lift_curve = bell_curve_lift(swingPhase);
-            P_foot_walk.z = leg.basePositionWalk.z + walkParams.stepHeight * lift_curve;
+            
+            leg.currentPosition.z = mapf(swingPhase, 0.0f, 1.0f, leg.swingStartPosition.z, baseFootPositionWalk[i].z) 
+                                + walkParams.stepHeight * lift_curve;
 
             // XY Position: Use quintic interpolation for smooth horizontal motion.
-            // We interpolate from the recorded lift-off point (leg.swingStartPositionWalk)
+            // We interpolate from the recorded lift-off point (leg.swingStartPosition)
             // to the calculated target landing point (targetTouchdownPos).
-            // Assume zero velocity *relative to the Walk Frame* at the start and end of the swing
-            // for simplicity and smooth transitions.
-            P_foot_walk.x = quintic_interpolate_pos(
-                leg.swingStartPositionWalk.x, targetTouchdownPos.x,
+            // Assume zero velocity *relative to the Ground, not Walk Frame* at the start and end of the swing to avoid slippage
+            leg.currentPosition.x = quintic_interpolate_pos(
+                leg.swingStartPosition.x, targetTouchdownPos.x,
                 -bodyVelocity.x, -bodyVelocity.x, // Zero start/end velocity relative to the ground X
                 T_swing, time_in_swing);
 
-            P_foot_walk.y = quintic_interpolate_pos(
-                leg.swingStartPositionWalk.y, targetTouchdownPos.y,
+            leg.currentPosition.y = quintic_interpolate_pos(
+                leg.swingStartPosition.y, targetTouchdownPos.y,
                 -bodyVelocity.y, -bodyVelocity.y, // Zero start/end velocity relative to the ground Y
                 T_swing, time_in_swing);
         }
 
         // 5. Transform Walk Frame Target to Leg IK Frame Target
         Vec3 P_foot_leg_ik_input; // This will hold the coordinates for calculateIK
-        transformWalkFrameToLegFrame(P_foot_walk, i, P_foot_leg_ik_input);
+        transformWalkFrameToLegFrame(leg.currentPosition, i, P_foot_leg_ik_input);
 
         // 6. Perform Inverse Kinematics
         float coxa_rad, femur_rad, tibia_rad;
@@ -251,15 +262,6 @@ void updateWalkCycle(float dt) {
             setAngleRadians(coxa_servo_channel, coxa_rad);
             setAngleRadians(femur_servo_channel, femur_rad);
             setAngleRadians(tibia_servo_channel, tibia_rad);
-        } else {
-            // IK failed for this leg at this target position.
-            // Log an error? Halt? For now, just don't send new servo commands,
-            // so the leg holds its last valid position.
-            // You might want more sophisticated error handling here.
-            // Serial.printf("[Warn] IK Fail Leg %d, Phase %.3f, TargetWalk(%.1f,%.1f,%.1f), TargetIK(%.1f,%.1f,%.1f)\n",
-            //               i, legPhase,
-            //               P_foot_walk.x, P_foot_walk.y, P_foot_walk.z,
-            //               P_foot_leg_ik_input.x, P_foot_leg_ik_input.y, P_foot_leg_ik_input.z);
         }
 
     } // End loop through legs

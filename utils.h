@@ -12,6 +12,8 @@ Adafruit_PWMServoDriver pwm1 = Adafruit_PWMServoDriver(0x41, Wire);
 
 //#include "Vec3.h" //not needed du eto quat including it
 #include "quat.h"
+#include "robot_spec.h"
+#include <math.h>
 
 void setupPwm(){
   Wire.begin(I2C_SDA, I2C_SCL);
@@ -47,28 +49,34 @@ float clampmapf(float x, float in_min, float in_max, float out_min, float out_ma
   return val;
 }
 
-uint16_t get_pulse_from_angle_degrees(float angle){
-  return(clampmapf(angle, -76.0, 76.0, SERVOMIN, SERVOMAX));
+uint16_t get_pulse_from_angle_degrees(uint8_t servo_idx, float angle){
+  return(clampmapf(angle - servo_center_angle[servo_idx % 3] * 180.0f / M_PI, -76.0f, 76.0f, SERVOMIN, SERVOMAX));
 }
-uint16_t get_pulse_from_angle_radians(float angle){
-  return(clampmapf(angle, -3.14159 * (76.0/180.0),3.14159 * (76.0/180.0), SERVOMIN, SERVOMAX));
+uint16_t get_pulse_from_angle_radians(uint8_t servo_idx, float angle){
+  return(clampmapf(angle - servo_center_angle[servo_idx % 3], -M_PI * (76.0/180.0), M_PI * (76.0/180.0), SERVOMIN, SERVOMAX));
 }
 
 void setAnglePulse(uint8_t servo_idx, uint16_t pulse){
+  #ifdef OSSIAN_HEMMA
+  latestServoAngles[servo_idx] = (((float)(pulse - SERVOMIN) * (2.0f * (76.0f * M_PI / 180.0f)) / (float)(SERVOMAX - SERVOMIN)) - (76.0f * M_PI / 180.0f))
+                                  + servo_center_angle[servo_idx % 3];
+  #endif
+  #ifndef OSSIAN_HEMMA
   if(!(servo_idx / 9)){
     pwm0.setPWM(servo_idx, 0, pulse);
   }
   else{
     pwm1.setPWM(servo_idx - 9, 0, pulse);
   }
+  #endif
 }
 
 void setAngleDegrees(uint8_t servo_idx, float angle){
-  setAnglePulse(servo_idx, get_pulse_from_angle_degrees(angle));
+  setAnglePulse(servo_idx, get_pulse_from_angle_degrees(servo_idx, angle));
 }
 
 void setAngleRadians(uint8_t servo_idx, float angle){
-  setAnglePulse(servo_idx, get_pulse_from_angle_radians(angle));
+  setAnglePulse(servo_idx, get_pulse_from_angle_radians(servo_idx, angle));
 }
 
 #endif

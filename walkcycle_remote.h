@@ -3,80 +3,78 @@
 
 #include <WiFi.h>
 #include <WiFiUdp.h>
-#include "packets.h"      // Include the new header with FullControlPacket definition
+#include "robot_spec.h"   // Include AFTER defining LEG_COUNT potentially
+#include "packets.h"      // Include the new packet definitions
 #include "walkcycle.h"    // Base walk cycle logic
-#include "ik.h"           // Inverse Kinematics (needed indirectly via walkcycle)
 #include "utils.h"        // Utilities like clampf
-#include "robot_spec.h"   // Global state variables (bodyVelocity, bodyOrientation, etc.)
+#include "passwords.h"
 
 // --- Network Configuration ---
+#ifndef OSSIAN_HEMMA
 const char* ssid = "guestnet";         // Replace with your WiFi SSID
 const char* password = "VolvoAmazon"; // Replace with your WiFi Password
 unsigned int localUdpPort = 5005;           // Port to listen on
+#endif
+#ifdef OSSIAN_HEMMA
+const char* ssid = SSID;         // Replace with your WiFi SSID
+const char* password = PASSWORD; // Replace with your WiFi Password
+unsigned int localUdpPort = 5005;           // Port to listen on
+// --- Angle Broadcast Configuration ---
+const char* angleBroadcastIp = "255.255.255.255"; // Broadcast address (adjust if needed, e.g., "192.168.1.255")
+unsigned int angleBroadcastPort = 5006;           // Different port for sending angles
+// Array to hold the angles before sending. Size = Legs * JointsPerLeg (assuming 3)
+// Make sure LEG_COUNT is defined correctly in robot_spec.h!
+float jointAnglesToSend[LEG_COUNT * 3];
+#endif
 
-// --- Global Variables ---
-WiFiUDP udp;
-uint8_t incomingPacketBuffer[sizeof(FullControlPacket)]; // Use size of the new packet
-uint64_t lastPacketTimestampMs = 0; // Track the last valid timestamp (for logging/sanity check)
-uint32_t lastSequenceNumber = 0;    // Track the last processed sequence number
-bool logPackets = false;            // Control verbose packet logging via Serial
+
+
+// ### Update buffer size for the new packet ###
+uint8_t incomingPacketBuffer[sizeof(FullControlPacket)];
+uint64_t lastPacketTimestampMs = 0;
+uint32_t lastSequenceNumber = 0;
+const uint32_t SEQUENCE_IGNORE_WINDOW = 25;
+bool logPackets = false;
 
 // Forward declarations
 void setupWalkcycleRemote();
 bool walkcycleRemoteUpdate();
-bool processFullControlPacket(); // Renamed packet processing function
+bool processFullControlPacket();
 bool processSerialCommands_remote();
 void printSerialHelp();
 
 /**
- * @brief Sets up WiFi connection, UDP listener, and initializes walk cycle state for remote control.
+ * @brief Sets up WiFi connection, UDP listener, and initializes walk cycle state.
  */
 void setupWalkcycleRemote() {
-  // Serial must be initialized in your main .ino's setup()
   Serial.println("\nSetting up Walk Cycle Remote Control (UDP) - Full Control Mode...");
+  setupWalkcycle(); // Initializes walk cycle data using initial defaultFootPositionWalk
+  walkCycleRunning = false;
+  logPackets = false;
+  lastSequenceNumber = 0;
+  lastPacketTimestampMs = 0;
 
-  // Setup base walk cycle systems (IK, initial leg positions, etc.)
-  setupWalkcycle();         // Initializes walk cycle data structures
-  walkCycleRunning = false; // Start stopped
-  logPackets = false;       // Logging off by default
-  lastSequenceNumber = 0;   // Reset sequence number tracking
-  lastPacketTimestampMs = 0;// Reset timestamp tracking
 
-  // Connect to Wi-Fi
-  Serial.printf("Connecting to %s ", ssid);
-  WiFi.begin(ssid, password);
-  int wifi_retries = 0;
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-    wifi_retries++;
-    if (wifi_retries > 20) { // Timeout after ~10 seconds
-        Serial.println("\nWiFi Connection Failed! Check SSID/Password. Halting.");
-        while(1) { delay(1000); } // Critical error
-    }
-  }
-  Serial.println(" Connected!");
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
 
-  // Start UDP listener
   Serial.printf("Starting UDP listener on port %d\n", localUdpPort);
   if (udp.begin(localUdpPort)) {
+      // ### Updated expected size message ###
       Serial.printf("UDP Listener started. Expected packet size: %d bytes (FullControlPacket).\n", sizeof(FullControlPacket));
   } else {
       Serial.println("Failed to start UDP Listener! Halting.");
-      while(1) { delay(1000); } // Critical error, stop here
+      while(1) { delay(1000); }
   }
 
   Serial.println("==== Walk Cycle Remote Ready ====");
-  printSerialHelp(); // Show available serial commands
+  printSerialHelp();
   Serial.println("================================");
 }
 
 /**
- * @brief Prints available serial commands for this mode to the Serial monitor.
+ * @brief Prints available serial commands for this mode.
  */
 void printSerialHelp() {
+    // ... (Help text remains the same) ...
     Serial.println("\n==== Serial Commands (Remote Mode) ====");
     Serial.println(" L - Toggle UDP Packet Logging (currently " + String(logPackets ? "ON" : "OFF") + ")");
     Serial.println(" X - Exit Remote Control Mode");
@@ -85,31 +83,30 @@ void printSerialHelp() {
 }
 
 /**
- * @brief Processes one incoming UDP packet, validates it, and updates robot state if valid.
- * @return True if a packet was available (processed or discarded), False if no packet was waiting.
+ * @brief Processes one incoming UDP packet, validates it, and updates robot state.
+ * @return True if a packet was available, False otherwise.
  */
 bool processFullControlPacket() {
   int packetSize = udp.parsePacket();
   if (!packetSize) {
-    return false; // No packet available
+    return false; // No packet
   }
 
   IPAddress remoteIp = udp.remoteIP();
   unsigned int remotePort = udp.remotePort();
 
-  // Basic logging if enabled
   if (logPackets) {
     Serial.printf("\nReceived packet: %d bytes from %s:%d\n", packetSize, remoteIp.toString().c_str(), remotePort);
   }
 
-  // --- Validation 1: Packet Size ---
+  // --- Validation 1: Packet Size --- ### Use new size ###
   if (packetSize != sizeof(FullControlPacket)) {
     Serial.printf("  [Error] Packet size mismatch! Expected %d, Got %d. Discarding.\n", sizeof(FullControlPacket), packetSize);
-    udp.flush(); // Clear the UDP buffer of the invalid packet
-    return true; // Handled (by discarding)
+    udp.flush();
+    return true;
   }
 
-  // Read packet data into buffer
+  // Read packet data
   int len = udp.read(incomingPacketBuffer, sizeof(FullControlPacket));
   if (len != sizeof(FullControlPacket)) {
       Serial.printf("  [Error] Failed to read correct # bytes! Read %d. Discarding.\n", len);
@@ -120,200 +117,165 @@ bool processFullControlPacket() {
   // Cast buffer to the packet struct pointer
   FullControlPacket* receivedPacket = (FullControlPacket*)incomingPacketBuffer;
 
-  // --- Validation 2: Identifier ---
+  // --- Validation 2: Identifier --- ### Use new identifier ###
   if (receivedPacket->identifier != FULL_CONTROL_PACKET_IDENTIFIER) {
       Serial.printf("  [Error] Invalid packet identifier! Expected 0x%X, Got 0x%X. Discarding.\n",
                     FULL_CONTROL_PACKET_IDENTIFIER, receivedPacket->identifier);
-      return true; // Handled (by discarding)
+      return true;
   }
 
-  // --- Validation 3: Sequence Number ---
-  // Check if the packet is newer than the last processed one. Handles rollover correctly.
-  if (receivedPacket->sequenceNumber <= lastSequenceNumber && lastSequenceNumber != 0) { // Allow first packet (seq > 0 if lastSeq == 0)
-       // Log if needed, but don't process old/duplicate sequence numbers
-       if (logPackets) {
+  // --- Validation 3: Sequence Number --- (Same logic as before)
+  if (receivedPacket->sequenceNumber <= lastSequenceNumber && lastSequenceNumber != 0 && (lastSequenceNumber - receivedPacket->sequenceNumber < SEQUENCE_IGNORE_WINDOW)) {
+       if (logPackets) { // Log if needed
           Serial.printf("  [Info] Stale/duplicate sequence number (%u <= %u). Ignoring.\n",
                          receivedPacket->sequenceNumber, lastSequenceNumber);
        }
-       // Also check timestamp as a secondary diagnostic
-       if (receivedPacket->timestampMs <= lastPacketTimestampMs && logPackets) {
-             Serial.printf("         Timestamp also old (%llu ms <= %llu ms).\n",
-                         receivedPacket->timestampMs, lastPacketTimestampMs);
-       }
        return true; // Handled (by ignoring)
   }
-  // --- Check timestamp for potential clock skew warnings ---
+  // --- Timestamp checks (same as before) ---
    if (receivedPacket->timestampMs <= lastPacketTimestampMs && logPackets && lastSequenceNumber != 0) {
-         Serial.printf("  [Warning] Newer sequence number (%u > %u) but older timestamp (%llu ms <= %llu ms). Clock skew?\n",
+         Serial.printf("  [Warning] Newer seq (%u > %u) but older timestamp (%llu ms <= %llu ms). Clock skew?\n",
                        receivedPacket->sequenceNumber, lastSequenceNumber,
                        receivedPacket->timestampMs, lastPacketTimestampMs);
    }
 
+  // Update sequence and timestamp tracking
+  uint32_t oldSequenceNumber = lastSequenceNumber;
+  lastSequenceNumber = receivedPacket->sequenceNumber;
+  lastPacketTimestampMs = receivedPacket->timestampMs;
 
-  // If we reach here, the packet is valid and newer based on sequence number.
-  uint32_t oldSequenceNumber = lastSequenceNumber; // Store for logging
-  lastSequenceNumber = receivedPacket->sequenceNumber; // Update sequence number *before* applying data
-  lastPacketTimestampMs = receivedPacket->timestampMs; // Update timestamp
 
-
-  // --- Optional Detailed Logging ---
+  // --- Optional Detailed Logging (Updated for new fields) ---
   if (logPackets) {
     Serial.println("  --- Processing Valid Packet ---");
     Serial.printf("    Identifier: 0x%X\n", receivedPacket->identifier);
     Serial.printf("    Timestamp: %llu ms\n", receivedPacket->timestampMs);
     Serial.printf("    Sequence #: %u (Prev: %u)\n", receivedPacket->sequenceNumber, oldSequenceNumber);
     Serial.printf("    Raw Flags: 0x%02X\n", receivedPacket->controlFlags);
-    Serial.printf("    Raw LinVel(X,Y,Z): (%.2f, %.2f, %.2f) cm/s\n", receivedPacket->velocityX, receivedPacket->velocityY, receivedPacket->velocityZ);
-    Serial.printf("    Raw AngVel(Yaw): %.3f rad/s\n", receivedPacket->angularVelocityYaw);
-    Serial.printf("    Raw Gait (H, F, D): (%.2f cm, %.2f Hz, %.2f)\n", receivedPacket->stepHeight, receivedPacket->stepFrequency, receivedPacket->dutyFactor);
-    Serial.printf("    Raw PosOff(X,Y,Z): (%.2f, %.2f, %.2f) cm\n", receivedPacket->bodyPositionOffsetX, receivedPacket->bodyPositionOffsetY, receivedPacket->bodyPositionOffsetZ);
+    Serial.printf("    Raw LinVel(X,Y,Z): (%.2f, %.2f, %.2f)\n", receivedPacket->velocityX, receivedPacket->velocityY, receivedPacket->velocityZ);
+    Serial.printf("    Raw AngVel(Yaw): %.3f\n", receivedPacket->angularVelocityYaw);
+    Serial.printf("    Raw Gait (H, F, D): (%.2f, %.2f, %.2f)\n", receivedPacket->stepHeight, receivedPacket->stepFrequency, receivedPacket->dutyFactor);
+    Serial.printf("    Raw PosOff(X,Y,Z): (%.2f, %.2f, %.2f)\n", receivedPacket->bodyPositionOffsetX, receivedPacket->bodyPositionOffsetY, receivedPacket->bodyPositionOffsetZ);
     Serial.printf("    Raw Orient(W,X,Y,Z): (%.3f, %.3f, %.3f, %.3f)\n", receivedPacket->bodyOrientationW, receivedPacket->bodyOrientationX, receivedPacket->bodyOrientationY, receivedPacket->bodyOrientationZ);
+    // ### Log received base foot positions ###
+    Serial.println("    Raw Base Foot Pos (XYZ):");
+    for (int i = 0; i < LEG_COUNT; ++i) {
+        Serial.printf("      L%d: (%.1f, %.1f, %.1f)\n", i,
+                      receivedPacket->baseFootPosXYZ[i * 3 + 0],
+                      receivedPacket->baseFootPosXYZ[i * 3 + 1],
+                      receivedPacket->baseFootPosXYZ[i * 3 + 2]);
+    }
     Serial.println("  ---------------------------------");
   }
 
   // --- Apply Packet Data to Robot State ---
 
-  // 1. Update Walk Cycle Running State
+  // 1. Update Walk Cycle Running State (Same as before)
   bool newRunningState = (receivedPacket->controlFlags & FLAG_WALK_RUNNING) != 0;
-  // Reset phase only when starting from a stopped state
-  if (newRunningState && !walkCycleRunning) {
-      globalPhase = 0.0f; // Reset phase for a clean start
-      if (logPackets) Serial.println("  State change: Starting walk cycle, phase reset.");
-  } else if (!newRunningState && walkCycleRunning) {
-       if (logPackets) Serial.println("  State change: Stopping walk cycle.");
-       // Optional: Command legs to a resting pose immediately upon stop?
-  }
+  if (newRunningState && !walkCycleRunning) { globalPhase = 0.0f; /* Reset phase */ }
   walkCycleRunning = newRunningState;
 
-  // 2. Update Velocities
+  // 2. Update Velocities (Same as before)
   bodyVelocity.x = receivedPacket->velocityX;
   bodyVelocity.y = receivedPacket->velocityY;
   bodyVelocity.z = receivedPacket->velocityZ;
-  //bodyAngularVelocityYaw = receivedPacket->angularVelocityYaw; // Update the new global variable //TODO! implement the yaw control
+  bodyAngularVelocityYaw = receivedPacket->angularVelocityYaw;
 
-  // 3. Update Walk Parameters
+  // 3. Update Walk Parameters (Same as before)
   walkParams.stepHeight = receivedPacket->stepHeight;
   walkParams.stepFrequency = receivedPacket->stepFrequency;
-  // Clamp duty factor to a safe range to prevent issues in walk cycle math
   walkParams.dutyFactor = clampf(receivedPacket->dutyFactor, 0.01f, 0.99f);
 
-  // 4. Update Body Pose (Position Offset and Orientation)
-  // Based on the user's packet definition, the FLAG_USE_BODY_POSE was removed,
-  // so we assume the pose should be updated with *every* valid packet now.
+  // 4. Update Body Pose (Same as before)
   bodyPositionOffset.x = receivedPacket->bodyPositionOffsetX;
   bodyPositionOffset.y = receivedPacket->bodyPositionOffsetY;
   bodyPositionOffset.z = receivedPacket->bodyPositionOffsetZ;
-
   bodyOrientation.w = receivedPacket->bodyOrientationW;
   bodyOrientation.x = receivedPacket->bodyOrientationX;
   bodyOrientation.y = receivedPacket->bodyOrientationY;
   bodyOrientation.z = receivedPacket->bodyOrientationZ;
-  bodyOrientation.normalize(); // CRITICAL: Ensure the quaternion remains normalized
+  bodyOrientation.normalize();
 
+  // 5. ### Update Base Foot Positions ###
+  for (int i = 0; i < LEG_COUNT; ++i) {
+      // Direct copy from packet into the global array
+      baseFootPositionWalk[i].x = receivedPacket->baseFootPosXYZ[i * 3 + 0];
+      baseFootPositionWalk[i].y = receivedPacket->baseFootPosXYZ[i * 3 + 1];
+      baseFootPositionWalk[i].z = receivedPacket->baseFootPosXYZ[i * 3 + 2];
+  }
 
-   if (logPackets) {
+   if (logPackets) { // Log applied state (optional: add base pos here too)
      Serial.println("  Applied state:");
      Serial.printf("    walkCycleRunning: %s\n", walkCycleRunning ? "true":"false");
-     Serial.printf("    bodyVelocity: (%.2f, %.2f, %.2f)\n", bodyVelocity.x, bodyVelocity.y, bodyVelocity.z);
-     //Serial.printf("    bodyAngVelYaw: %.3f\n", bodyAngularVelocityYaw); //TODO! uncomment
-     Serial.printf("    walkParams (H, F, D): (%.2f, %.2f, %.2f)\n", walkParams.stepHeight, walkParams.stepFrequency, walkParams.dutyFactor);
-     Serial.printf("    bodyPosOffset: (%.2f, %.2f, %.2f)\n", bodyPositionOffset.x, bodyPositionOffset.y, bodyPositionOffset.z);
-     Serial.printf("    bodyOrient (WXYZ): (%.3f, %.3f, %.3f, %.3f)\n", bodyOrientation.w, bodyOrientation.x, bodyOrientation.y, bodyOrientation.z);
+     // ... (log other applied states) ...
+     // Example logging applied base positions:
+     Serial.println("    Applied Base Foot Pos (XYZ):");
+     for (int i = 0; i < LEG_COUNT; ++i) {
+         Serial.printf("      L%d: (%.1f, %.1f, %.1f)\n", i,
+                       baseFootPositionWalk[i].x,
+                       baseFootPositionWalk[i].y,
+                       baseFootPositionWalk[i].z);
+     }
    }
 
-  return true; // Packet processed successfully
+  return true; // Packet processed
 }
 
 
 /**
  * @brief Processes incoming serial commands (like toggling logs or exiting).
- * @return True to continue running this mode, False to exit back to the main menu.
+ * @return True to continue running, False to exit.
  */
 bool processSerialCommands_remote() {
-  if (Serial.available() > 0) {
-    char command = Serial.read(); // Read single character command
-    // Consume any extra newline characters that might follow
-    while (Serial.available() > 0 && (Serial.peek() == '\n' || Serial.peek() == '\r')) {
-        Serial.read();
+    // ... (This function remains unchanged) ...
+    if (Serial.available() > 0) {
+        char command = Serial.read();
+        while (Serial.available() > 0 && (Serial.peek() == '\n' || Serial.peek() == '\r')) { Serial.read(); }
+        switch (toupper(command)) {
+            case 'L': logPackets = !logPackets; Serial.printf("\nPacket Logging: %s\n", logPackets ? "ON" : "OFF"); printSerialHelp(); break;
+            case 'X': Serial.println("\nExiting Remote Mode..."); walkCycleRunning = false; return false;
+            case 'H': case '?': printSerialHelp(); break;
+            default: if (isprint(command)) { Serial.printf("\nUnknown command: '%c'. H for help.\n", command); } break;
+        }
     }
-
-    switch (toupper(command)) { // Use uppercase for case-insensitivity
-      case 'L':
-        logPackets = !logPackets;
-        Serial.print("\nPacket Logging is now ");
-        Serial.println(logPackets ? "ON" : "OFF");
-        printSerialHelp(); // Show help again as context
-        break;
-
-      case 'X':
-        Serial.println("\nExiting Remote Control Mode via serial command.");
-        walkCycleRunning = false; // Ensure robot stops moving
-        // Optional: Add code here to move legs to a defined resting pose before exiting
-        return false; // Signal exit to main loop
-
-      case 'H':
-      case '?':
-        printSerialHelp();
-        break;
-
-      default:
-        // Ignore unknown characters or print message if printable
-         if (isprint(command)) {
-             Serial.print("\nUnknown serial command: '");
-             Serial.print(command);
-             Serial.println("'. Type 'H' or '?' for help.");
-         }
-        break;
-    }
-  }
-  return true; // Continue running
+    return true;
 }
-
 
 /**
  * @brief Main update loop for the remote walk cycle mode.
- * Checks serial, processes UDP packets, calculates dt, and calls the core walk cycle update.
- * @return True to continue running this mode, False to exit back to the main menu.
+ * @return True to continue running, False to exit.
  */
 bool walkcycleRemoteUpdate() {
-  // 1. Check for Serial Commands (like Exit or Log Toggle)
+  // ... (Structure remains the same) ...
+  // 1. Check Serial Commands
   if (!processSerialCommands_remote()) {
-    return false; // Exit command received
+    return false;
   }
 
-  // 2. Process Incoming UDP Packets (updates state variables if a valid packet arrives)
-  processFullControlPacket(); // Process one packet per call, if available
+  // 2. Process Incoming UDP Packet(s)
+  // Process multiple packets if available quickly? Or just one per loop?
+  // Processing just one is usually fine and simpler.
+  processFullControlPacket();
 
-  // 3. Calculate Time Delta (dt) for Walk Cycle Update
+  // 3. Calculate Time Delta (dt)
+  // ... (dt calculation and clamping logic remains the same) ...
   static unsigned long lastUpdateTimeMicros = 0;
   unsigned long nowMicros = micros();
-  // Handle first run or potential timer rollover
-  if (lastUpdateTimeMicros == 0 || nowMicros < lastUpdateTimeMicros) {
-    lastUpdateTimeMicros = nowMicros;
-  }
+  if (lastUpdateTimeMicros == 0 || nowMicros < lastUpdateTimeMicros) { lastUpdateTimeMicros = nowMicros; }
   float dt = (nowMicros - lastUpdateTimeMicros) / 1000000.0f;
   lastUpdateTimeMicros = nowMicros;
-
-  // Prevent unreasonably large dt values if loop execution stalls significantly
-  // Also handles the case where dt might be slightly negative due to micros() rollover
-  // (though less frequent than millis()). Max dt of 0.1s (10Hz min update for simulation)
   if (dt < 0.0f || dt > 0.1f) {
-      if (logPackets && dt != 0.0f) { // Avoid spamming if dt is 0 on first valid run
-           Serial.printf("[Warning] Unusual dt detected: %.4f s. Clamping to 0.01s\n", dt);
-      }
-      dt = 0.01f; // Use a small, safe default delta time if calculation is suspect
+      if (logPackets && dt != 0.0f) { Serial.printf("[Warning] Unusual dt: %.4f s. Clamping to 0.01s\n", dt); }
+      dt = 0.01f;
   }
 
-  // 4. Update Walk Cycle Logic (if enabled by UDP command)
-  // This function uses the global variables (bodyVelocity, bodyAngularVelocityYaw, walkParams, etc.)
-  // that were potentially updated by processFullControlPacket().
+
+  // 4. Update Walk Cycle Logic if Running
   if (walkCycleRunning) {
-      updateWalkCycle(dt); // Pass the calculated time delta
-      // Note: updateWalkCycle currently doesn't USE bodyAngularVelocityYaw.
-      // That modification needs to be made within walkcycle.h itself.
+      updateWalkCycle(dt); // This now implicitly uses the updated defaultFootPositionWalk values
   }
 
-  return true; // Continue running this mode
+  return true;
 }
 
 #endif // WALK_CYCLE_REMOTE_H

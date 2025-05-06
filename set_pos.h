@@ -6,7 +6,7 @@
 bool ikRunning = false;
 uint8_t currentLeg = 0;
 Vec3 legTargets[LEG_COUNT];
-bool legActive[LEG_COUNT] = {true, true, true, true};
+bool legActive[LEG_COUNT] = {true, true, true, true, true, true};
 
 void setupIKPostitioning(){
   ikRunning = false;

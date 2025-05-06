@@ -15,7 +15,7 @@ struct WaveChannel {
   uint16_t amplitude;
 };
 
-WaveChannel waveChannels[16]; // All 16 channels
+WaveChannel waveChannels[18]; // All 16 channels
 uint8_t waveSpeed = DEFAULT_WAVE_SPEED;
 bool waveRunning = false;
 unsigned long lastWaveUpdate = 0;
@@ -73,7 +73,7 @@ bool processWaveCommands() {
         case 'M': // Toggle motor
           {
             uint8_t channel = input.toInt();
-            if (channel < 16) {
+            if (channel < 18) {
               waveChannels[channel].active = !waveChannels[channel].active;
               Serial.print("Channel ");
               Serial.print(channel);
@@ -86,7 +86,8 @@ bool processWaveCommands() {
         case 'A': // Toggle all motors
           {
             bool newState = !waveChannels[0].active; // Toggle based on first channel
-            for (uint8_t i = 0; i < 16; i++) {
+            for (uint8_t i = 0; i < 18
+            ; i++) {
               waveChannels[i].active = newState;
             }
             Serial.print("All channels are now ");
@@ -111,7 +112,7 @@ bool processWaveCommands() {
           {
             uint16_t center = input.toInt();
             if (center >= SERVOMIN && center <= SERVOMAX) {
-              for (uint8_t i = 0; i < 16; i++) {
+              for (uint8_t i = 0; i < 18; i++) {
                 if (waveChannels[i].active) {
                   waveChannels[i].center = center;
                 }
@@ -128,7 +129,7 @@ bool processWaveCommands() {
           {
             uint16_t amplitude = input.toInt();
             if (amplitude >= 1 && amplitude <= 180) {
-              for (uint8_t i = 0; i < 16; i++) {
+              for (uint8_t i = 0; i < 18; i++) {
                 if (waveChannels[i].active) {
                   waveChannels[i].amplitude = amplitude;
                 }
@@ -157,7 +158,7 @@ void updateWave() {
   float deltaTime = (currentTime - lastWaveUpdate) / 1000.0; // Convert to seconds
   lastWaveUpdate = currentTime;
   
-  for (uint8_t i = 0; i < 16; i++) {
+  for (uint8_t i = 0; i < 18; i++) {
     if (waveChannels[i].active) {
       // Update phase based on speed
       waveChannels[i].phase += deltaTime * waveSpeed * 0.1;
