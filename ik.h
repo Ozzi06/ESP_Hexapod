@@ -2,11 +2,12 @@
 #ifndef IK_H
 #define IK_H
 
-#include "utils.h"
+#include "math_utils.h"
+#include "servo_angles.h"
 #include <math.h>
 #include "robot_spec.h"
 
-bool calculateIK(uint8_t leg, float x, float y, float z, float& coxaAngle, float& femurAngle, float& tibiaAngle) {
+inline bool calculateIK(uint8_t leg, float x, float y, float z, float& coxaAngle, float& femurAngle, float& tibiaAngle) {
   const float lC = COXA_LENGTH;
   const float lF = FEMUR_LENGTH;
   const float lT = TIBIA_LENGTH;
@@ -109,8 +110,7 @@ bool calculateIK(uint8_t leg, float x, float y, float z, float& coxaAngle, float
   return true;
 }
 
-
-void moveLegToTarget(uint8_t leg, const Vec3& target_leg_ik, bool log = false) {
+inline void moveLegToTarget(uint8_t leg, const Vec3& target_leg_ik, bool log = false) {
     float coxa_rad, femur_rad, tibia_rad;
 
     if (calculateIK(leg, target_leg_ik.x, target_leg_ik.y, target_leg_ik.z, coxa_rad, femur_rad, tibia_rad)) {

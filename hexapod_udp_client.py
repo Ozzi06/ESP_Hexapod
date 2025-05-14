@@ -55,7 +55,7 @@ class HexapodUDPClient:
         self.velocity_z = 0.0
         self.angular_velocity_yaw = 0.0
         self.step_height = 3.0
-        self.step_frequency = 1.0
+        self.step_time = 1.0
         self.duty_factor = 0.5
         self.body_position_x = 0.0
         self.body_position_y = 0.0
@@ -105,16 +105,16 @@ class HexapodUDPClient:
         """
         self.angular_velocity_yaw = float(yaw_rate)
 
-    def set_gait_params(self, height: float, frequency: float, duty: float):
+    def set_gait_params(self, height: float, step_time: float, duty: float):
         """
         Sets the walk gait parameters.
         Args:
             height: Step height in cm.
-            frequency: Step frequency in Hz.
+            step_time: Step step_time in seconds.
             duty: Duty factor (0.01 to 0.99 recommended).
         """
         self.step_height = float(height)
-        self.step_frequency = float(frequency)
+        self.step_time = float(step_time)
         # Clamp duty factor to a reasonable range to match ESP32 receiver clamp
         self.duty_factor = max(0.01, min(0.99, float(duty)))
 
@@ -190,7 +190,7 @@ class HexapodUDPClient:
                 control_flags,
                 # Locomotion Control
                 self.velocity_x, self.velocity_y, self.velocity_z,
-                self.angular_velocity_yaw, self.step_height, self.step_frequency, self.duty_factor,
+                self.angular_velocity_yaw, self.step_height, self.step_time, self.duty_factor,
                 # Body Pose Control
                 self.body_position_x, self.body_position_y, self.body_position_z,
                 self.body_orientation_w, self.body_orientation_x, self.body_orientation_y, self.body_orientation_z
@@ -212,7 +212,7 @@ class HexapodUDPClient:
             print(f"  Flags: {control_flags}")
             print(f"  LinVel: ({self.velocity_x}, {self.velocity_y}, {self.velocity_z})")
             print(f"  AngVel: {self.angular_velocity_yaw}")
-            print(f"  Gait: ({self.step_height}, {self.step_frequency}, {self.duty_factor})")
+            print(f"  Gait: ({self.step_height}, {self.step_time}, {self.duty_factor})")
             print(f"  Pos: ({self.body_position_x}, {self.body_position_y}, {self.body_position_z})")
             print(f"  Orient: ({self.body_orientation_w}, {self.body_orientation_x}, {self.body_orientation_y}, {self.body_orientation_z})")
             return None # Indicate packing failure

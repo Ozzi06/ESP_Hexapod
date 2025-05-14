@@ -1,8 +1,7 @@
 #ifndef ROBOT_SPEC_H
 #define ROBOT_SPEC_H
 
-#include "Vec3.h"
-#include "quat.h"
+#include "math_utils.h"
 
 // --- Constants ---
 #define LEG_COUNT 6 // Make sure this matches LEG_SERVOS etc.
@@ -33,7 +32,14 @@ extern const float servo_center_angle[3];
 
 // Servo channel assignments per leg [leg][joint: 0=coxa, 1=femur, 2=tibia]
 // Maps logical leg/joint to the physical PCA9685 channel (0-15 range, board dependent)
-extern const uint8_t LEG_SERVOS[LEG_COUNT][3];
+constexpr uint8_t LEG_SERVOS[LEG_COUNT][3] = {
+  { 2,  1,  0},        // Leg 0 (BR)
+  { 10,  9,  8},       // Leg 1 (CR)
+  { 14,  13,  12},     // Leg 2 (FR)
+  { 16+14, 16+13, 16+12}, // Leg 3 (BL)
+  { 16+6, 16+5, 16+4},    // Leg 4 (CL)
+  { 16+2, 16+1, 16+0},    // Leg 5 (FL)
+};
 
 // --- Global State Variables ---
 // Desired body pose relative to the Walk Frame (Walk Frame: X=Right, Y=Fwd, Z=Up, fixed orientation)

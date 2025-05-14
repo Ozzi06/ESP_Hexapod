@@ -1,5 +1,5 @@
 #include "robot_spec.h"
-#define OSSIAN_HEMMA
+//#define OSSIAN_HEMMA
 
 #ifdef OSSIAN_HEMMA
 const float COXA_LENGTH  = 8.0f; // Length from hip to knee joint
@@ -31,33 +31,24 @@ float latestServoAngles[LEG_COUNT * 3] = {0};
 // Relative to the point on the ground directly below the body center. (walk frame)
 #ifdef OSSIAN_HEMMA
 Vec3 baseFootPositionWalk[LEG_COUNT] = {
-    { 27.0f, -19.0f, 0.0f}, // Leg 0 (BR): Example - Back Right
-    { 32.0f,   0.0f, 0.0f}, // Leg 1 (CR): Example - Center Right
-    { 27.0f,  19.0f, 0.0f}, // Leg 2 (FR): Example - Front Right
-    {-27.0f, -19.0f, 0.0f}, // Leg 3 (BL): Example - Back Left
-    {-32.0f,   0.0f, 0.0f}, // Leg 4 (CL): Example - Center Left
-    {-27.0f,  19.0f, 0.0f}  // Leg 5 (FL): Example - Front Left
+    { 27.0f, -19.0f, 0.0f}, // Leg 0 (BR)
+    { 32.0f,   0.0f, 0.0f}, // Leg 1 (CR)
+    { 27.0f,  19.0f, 0.0f}, // Leg 2 (FR)
+    {-27.0f, -19.0f, 0.0f}, // Leg 3 (BL)
+    {-32.0f,   0.0f, 0.0f}, // Leg 4 (CL)
+    {-27.0f,  19.0f, 0.0f}  // Leg 5 (FL)
 };
 #else
 Vec3 baseFootPositionWalk[LEG_COUNT] = {
-    { 15.0f, -13.0f, 0.0f}, // Leg 0 (BR): Example - Back Right
-    { 20.0f,   0.0f, 0.0f}, // Leg 1 (CR): Example - Center Right
-    { 15.0f,  13.0f, 0.0f}, // Leg 2 (FR): Example - Front Right
-    {-15.0f, -13.0f, 0.0f}, // Leg 3 (BL): Example - Back Left
-    {-20.0f,   0.0f, 0.0f}, // Leg 4 (CL): Example - Center Left
-    {-15.0f,  13.0f, 0.0f}  // Leg 5 (FL): Example - Front Left
+    { 27.0f, -19.0f, 0.0f}, // Leg 0 (BR)
+    { 32.0f,   0.0f, 0.0f}, // Leg 1 (CR)
+    { 27.0f,  19.0f, 0.0f}, // Leg 2 (FR)
+    {-27.0f, -19.0f, 0.0f}, // Leg 3 (BL)
+    {-32.0f,   0.0f, 0.0f}, // Leg 4 (CL)
+    {-27.0f,  19.0f, 0.0f}  // Leg 5 (FL)
 };
 #endif
 
-// Servo channel assignments per leg [leg][joint: 0=coxa, 1=femur, 2=tibia]
-const uint8_t LEG_SERVOS[LEG_COUNT][3] = {
-  { 9, 10, 11},   // Leg 0 (BR)
-  {12, 13, 14},   // Leg 1 (CR)
-  {15, 16, 17},   // Leg 2 (FR)
-  { 0,  1,  2},   // Leg 3 (BL)
-  { 3,  4,  5},   // Leg 4 (CL)
-  { 6,  7,  8},   // Leg 5 (FL)
-};
 #ifdef OSSIAN_HEMMA
 const Vec3 legOriginOffset[LEG_COUNT] = {
     {   12.0f,   -10.0f, 0.0f}, // Leg 0(BR)
@@ -68,6 +59,14 @@ const Vec3 legOriginOffset[LEG_COUNT] = {
     {  -12.0f,    10.0f, 0.0f}  // Leg 5(FL)
 };
 #else
+const Vec3 legOriginOffset[LEG_COUNT] = {
+    {   5.75f,   -7.75f , 0.0f}, // Leg 0(BR)
+    {   7.9f,      0.0f, 0.0f}, // Leg 1(CR)
+    {   5.75f,    7.75f, 0.0f}, // Leg 2(FR)
+    {  -5.75f,   -7.75f, 0.0f}, // Leg 3(BL)
+    {  -7.9f,      0.0f, 0.0f}, // Leg 4(CL)
+    {  -5.75f,    7.75f, 0.0f}  // Leg 5(FL)
+};
 #endif
 
 const float legMountingAngle[LEG_COUNT] = {

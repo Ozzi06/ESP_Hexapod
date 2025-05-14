@@ -23,7 +23,7 @@ struct FullControlPacket {
     float    velocityZ;
     float    angularVelocityYaw;
     float    stepHeight;
-    float    stepFrequency;
+    float    stepTime;
     float    dutyFactor;
 
     // --- Body Pose Control (28 bytes) ---

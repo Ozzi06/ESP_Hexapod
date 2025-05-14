@@ -18,12 +18,12 @@ except ImportError:
 
 # --- Configuration ---
 DEFAULT_TARGET_PORT = 5005
-DEFAULT_UPDATE_FREQUENCY_HZ = 10.0 # ### Default send rate ###
+DEFAULT_UPDATE_FREQUENCY_HZ = 50.0 # ### Default send rate ###
 MIN_UPDATE_FREQUENCY_HZ = 1.0
 MAX_UPDATE_FREQUENCY_HZ = 100.0
 
-DEFAULT_LINEAR_SPEED = 5.0
-DEFAULT_YAW_RATE = 0.5
+DEFAULT_LINEAR_SPEED = 8.0
+DEFAULT_YAW_RATE = 0.3
 DEFAULT_POSE_ADJUST_SPEED_LINEAR = 2.0
 DEFAULT_POSE_ADJUST_SPEED_ANGULAR = math.radians(15.0)
 
@@ -192,10 +192,10 @@ class HexapodControllerGUI(QMainWindow):
         self.step_height_input.setRange(0.0, 10.0); self.step_height_input.setDecimals(1); self.step_height_input.setSingleStep(0.1)
         self.step_height_input.setValue(3.0)
         gait_form_layout.addRow("Step Height (cm):", self.step_height_input)
-        self.step_freq_input = QDoubleSpinBox()
-        self.step_freq_input.setRange(0.1, 5.0); self.step_freq_input.setDecimals(1); self.step_freq_input.setSingleStep(0.1)
-        self.step_freq_input.setValue(1.5)
-        gait_form_layout.addRow("Step Frequency (Hz):", self.step_freq_input)
+        self.step_time_input = QDoubleSpinBox()
+        self.step_time_input.setRange(0.1, 5.0); self.step_time_input.setDecimals(1); self.step_time_input.setSingleStep(0.1)
+        self.step_time_input.setValue(1.5)
+        gait_form_layout.addRow("Step Time (s):", self.step_time_input)
         self.duty_factor_input = QDoubleSpinBox()
         self.duty_factor_input.setRange(0.01, 0.99); self.duty_factor_input.setDecimals(2); self.duty_factor_input.setSingleStep(0.05)
         self.duty_factor_input.setValue(0.5)
@@ -524,7 +524,7 @@ class HexapodControllerGUI(QMainWindow):
         self.hexapod_client.set_velocity(self.current_velocity_x, self.current_velocity_y)
         self.hexapod_client.set_angular_velocity(self.current_yaw_rate)
         self.hexapod_client.set_gait_params(
-            self.step_height_input.value(), self.step_freq_input.value(), self.duty_factor_input.value()
+            self.step_height_input.value(), self.step_time_input.value(), self.duty_factor_input.value()
         )
         self.hexapod_client.set_body_position(
             self.current_body_pos[0], self.current_body_pos[1], self.current_body_pos[2]
@@ -560,7 +560,7 @@ class HexapodControllerGUI(QMainWindow):
         self.orient_y_label.setText(f"{orient_tuple[2]:.3f}")
         self.orient_z_label.setText(f"{orient_tuple[3]:.3f}")
         self.gait_h_label.setText(f"{self.step_height_input.value():.1f} cm")
-        self.gait_f_label.setText(f"{self.step_freq_input.value():.1f} Hz")
+        self.gait_f_label.setText(f"{self.step_time_input.value():.1f} Hz")
         self.gait_d_label.setText(f"{self.duty_factor_input.value():.2f}")
         self.walk_status_label.setText("RUNNING" if self.hexapod_client._walk_running else "STOPPED")
         self.walk_status_label.setStyleSheet("color: green" if self.hexapod_client._walk_running else "color: red")

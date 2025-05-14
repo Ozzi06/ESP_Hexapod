@@ -1,34 +1,22 @@
 //hexapod_proj.ino
-// Suggested servo limits (optional)
-#define SERVOMIN  175 //-71 degrees (assume -76 degrees)
-#define SERVOMAX  535 //81 degrees (Assume 76 degrees)
-#define SERVOMIDDLE 355
-#define SERVO_FREQ 50
+// Suggested servo limits
 
-#define OSSIAN_HEMMA
+//#define OSSIAN_HEMMA
 
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include "servo_angles.h"
 // --- Global Variables ---
 WiFiUDP udp;
 
-#include "utils.h"
-
-
-#include "serial_remote.h"
-#include "servo_wave.h"
-#include "set_pos.h"
-#include "walkcycle_serial.h"
 #include "walkcycle_remote.h"
+#include "servo_test_mode.h"
 
 // Program states
 enum ProgramState {
   MAIN_MENU,
-  SERIAL_CONTROL,
-  WAVE_PROGRAM,
-  IK_PROGRAM,
-  WALKCYCLE_SERIAL,
   WALKCYCLE_REMOTE,
+  SERVO_TEST_MODE,
   // Add more program states here as you create them
 };
 
@@ -36,15 +24,10 @@ ProgramState currentState = MAIN_MENU;
 
 void printMainMenu() {
   Serial.println("\n===== Main Menu =====");
-  Serial.println("1 - Serial Servo Control");
-  Serial.println("2 - Sinus Wave");
-  Serial.println("3 - Inverse kinematics");
-  Serial.println("4 - Walkcycle Serial");
-  Serial.println("5 - Walkcycle Remote");
+  Serial.println("1 - Walkcycle Remote");
+  Serial.println("2 - Servo Test Mode");
   Serial.println("====================");
 }
-
-
 
 void setup() {
   Serial.begin(115200);
@@ -83,26 +66,12 @@ void handleMainMenu() {
     
     switch (input_char) {
       case '1':
-        currentState = SERIAL_CONTROL;
-        setup_serial_control();
-        break;
-        
-      case '2':
-        currentState = WAVE_PROGRAM;
-        setupWaveProgram();
-        break;
-        
-      case '3':
-        currentState = IK_PROGRAM;
-        setupIKPostitioning();
-        break;
-      case '4':
-        currentState = WALKCYCLE_SERIAL;
-        setupWalkcycleSerial();
-        break;
-      case '5':
         currentState = WALKCYCLE_REMOTE;
         setupWalkcycleRemote();
+        break;
+    case '2':
+        currentState = SERVO_TEST_MODE;
+        setupServoTestMode();
         break;
         
       case 'X':
@@ -124,38 +93,6 @@ switch (currentState) {
     case MAIN_MENU:
       handleMainMenu();
       break;
-      
-    case SERIAL_CONTROL:
-      if (!update_serial()) { // If update_serial returns false, exit to main menu
-        Serial.println("update_serial exited, returning to menu");
-        currentState = MAIN_MENU;
-        printMainMenu();
-      }
-      break;
-
-    case WAVE_PROGRAM:
-      if (!updateWaveProgram()) { // If update_serial returns false, exit to main menu
-        Serial.println("updateWaveProgram exited, returning to menu");
-        currentState = MAIN_MENU;
-        printMainMenu();
-      }
-      break;
-
-    case IK_PROGRAM:
-      if (!IKpositioning()) { // If update_serial returns false, exit to main menu
-        Serial.println("updateIKProgram exited, returning to menu");
-        currentState = MAIN_MENU;
-        printMainMenu();
-      }
-      break;
-
-    case WALKCYCLE_SERIAL:
-      if (!walkcycleSerialUpdate()) { // If update_serial returns false, exit to main menu
-        Serial.println("walkCycleSerial exited, returning to menu");
-        currentState = MAIN_MENU;
-        printMainMenu();
-      }
-      break;
 
     case WALKCYCLE_REMOTE:
       if (!walkcycleRemoteUpdate()) { // If update_serial returns false, exit to main menu
@@ -164,12 +101,57 @@ switch (currentState) {
         printMainMenu();
       }
       break;
+
+    case SERVO_TEST_MODE:
+        if (!servoTestModeUpdate()) {
+            currentState = MAIN_MENU;
+            printMainMenu();
+        }
+        break;
       
     // Add more program cases here as you create them
   }
 }
 
+const int VOLTAGE_SENSOR_PIN = 9; // A10 on XIAO ESP32-S3 corresponds to GPIO1
+unsigned long lastVoltagePrintTime = 0;
+const unsigned long voltagePrintInterval = 1000; // 1000 milliseconds = 1 second
+
+// --- Voltage Divider and ADC Configuration ---
+// IMPORTANT: Verify R1 and R2 match your physical connections!
+// R1 is the resistor from your actual voltage source (Vin) to the ADC pin.
+// R2 is the resistor from the ADC pin to Ground.
+const float R1_OHMS = 10000.0f; // e.g., 10k Ohm
+const float R2_OHMS = 3800.0f;  // e.g., 3.84k Ohm
+
+const float ADC_VREF = 3.3f;       // ADC reference voltage for ESP32 (usually 3.3V)
+const float ADC_MAX_VALUE = 4095.0f; // ESP32 has a 12-bit ADC (2^12 - 1)
+
 void loop() {
+  if (millis() - lastVoltagePrintTime >= voltagePrintInterval) {
+    lastVoltagePrintTime = millis(); // Update the last print time
+
+    int sensorValue = analogRead(VOLTAGE_SENSOR_PIN); // Read the analog value (0-4095)
+    
+    // Calculate voltage at the ADC pin
+    float v_at_adc_pin = sensorValue * (ADC_VREF / ADC_MAX_VALUE);
+    
+    // Calculate the actual input voltage before the divider
+    // Vin = V_at_adc_pin * (R1 + R2) / R2
+    float v_in_actual = 0.0f;
+    if (R2_OHMS > 0.001f) { // Avoid division by zero
+          v_in_actual = v_at_adc_pin * (R1_OHMS + R2_OHMS) / R2_OHMS;
+    }
+    /*
+    Serial.print("A10(GPIO1) Raw: ");
+    Serial.print(sensorValue);
+    Serial.print(" | V_adc: ");
+    Serial.print(v_at_adc_pin, 2); // Voltage at ADC pin, 2 decimal places
+    Serial.print(" V | Vin_actual: ");
+    Serial.print(v_in_actual, 2);   // Calculated actual input voltage, 2 decimal places
+    Serial.println(" V");*/
+  }
+
   stateMachine();
   #ifdef OSSIAN_HEMMA
     // Check if WiFi is connected before attempting to send

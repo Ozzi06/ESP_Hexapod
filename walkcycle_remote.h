@@ -6,7 +6,6 @@
 #include "robot_spec.h"   // Include AFTER defining LEG_COUNT potentially
 #include "packets.h"      // Include the new packet definitions
 #include "walkcycle.h"    // Base walk cycle logic
-#include "utils.h"        // Utilities like clampf
 #include "passwords.h"
 
 // --- Network Configuration ---
@@ -154,7 +153,7 @@ bool processFullControlPacket() {
     Serial.printf("    Raw Flags: 0x%02X\n", receivedPacket->controlFlags);
     Serial.printf("    Raw LinVel(X,Y,Z): (%.2f, %.2f, %.2f)\n", receivedPacket->velocityX, receivedPacket->velocityY, receivedPacket->velocityZ);
     Serial.printf("    Raw AngVel(Yaw): %.3f\n", receivedPacket->angularVelocityYaw);
-    Serial.printf("    Raw Gait (H, F, D): (%.2f, %.2f, %.2f)\n", receivedPacket->stepHeight, receivedPacket->stepFrequency, receivedPacket->dutyFactor);
+    Serial.printf("    Raw Gait (H, F, D): (%.2f, %.2f, %.2f)\n", receivedPacket->stepHeight, receivedPacket->stepTime, receivedPacket->dutyFactor);
     Serial.printf("    Raw PosOff(X,Y,Z): (%.2f, %.2f, %.2f)\n", receivedPacket->bodyPositionOffsetX, receivedPacket->bodyPositionOffsetY, receivedPacket->bodyPositionOffsetZ);
     Serial.printf("    Raw Orient(W,X,Y,Z): (%.3f, %.3f, %.3f, %.3f)\n", receivedPacket->bodyOrientationW, receivedPacket->bodyOrientationX, receivedPacket->bodyOrientationY, receivedPacket->bodyOrientationZ);
     // ### Log received base foot positions ###
@@ -172,7 +171,6 @@ bool processFullControlPacket() {
 
   // 1. Update Walk Cycle Running State (Same as before)
   bool newRunningState = (receivedPacket->controlFlags & FLAG_WALK_RUNNING) != 0;
-  if (newRunningState && !walkCycleRunning) { globalPhase = 0.0f; /* Reset phase */ }
   walkCycleRunning = newRunningState;
 
   // 2. Update Velocities (Same as before)
@@ -183,7 +181,7 @@ bool processFullControlPacket() {
 
   // 3. Update Walk Parameters (Same as before)
   walkParams.stepHeight = receivedPacket->stepHeight;
-  walkParams.stepFrequency = receivedPacket->stepFrequency;
+  walkParams.stepTime = receivedPacket->stepTime;
   walkParams.dutyFactor = clampf(receivedPacket->dutyFactor, 0.01f, 0.99f);
 
   // 4. Update Body Pose (Same as before)

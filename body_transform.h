@@ -1,8 +1,7 @@
 #ifndef BODY_TRANSFORM_H
 #define BODY_TRANSFORM_H
 
-#include "Vec3.h"
-#include "quat.h"
+#include "math_utils.h"
 #include "robot_spec.h" // Includes global state and constants
 
 /**
