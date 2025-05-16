@@ -1,7 +1,6 @@
 #include "robot_spec.h"
-//#define OSSIAN_HEMMA
 
-#ifdef OSSIAN_HEMMA
+#ifdef SCRAP_MECHANIC
 const float COXA_LENGTH  = 8.0f; // Length from hip to knee joint
 const float FEMUR_LENGTH = 9.0; // Length from knee to ankle joint
 const float TIBIA_LENGTH = 10.5; // Length from ankle to foot
@@ -84,7 +83,7 @@ const float servo_center_angle[3] = {
 };
 
 // Define global state variables (initial values)
-Vec3 bodyPositionOffset = {0.0f, 0.0f, 17.0f}; // Start 15cm above walk frame origin
+Vec3 bodyPositionOffset = {0.0f, 0.0f, 10.0f}; // Start 10cm above walk frame origin
 Quaternion bodyOrientation = Quaternion::identity();
 Vec3 bodyVelocity = {0.0f, 0.0f, 0.0f}; // Initialize to zero velocity
 float bodyAngularVelocityYaw = 0.0f;

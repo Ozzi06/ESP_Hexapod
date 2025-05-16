@@ -40,7 +40,12 @@ inline bool calculateIK(uint8_t leg, float x, float y, float z, float& coxaAngle
     
     // Check if position is reachable
     if (h > (lF + lT) || h < fabs(lF - lT)) {
-      Serial.println("Target position unreachable!");
+      Serial.print("Target position unreachable!: ");
+      Serial.print(x);
+      Serial.print(", ");
+      Serial.print(y);
+      Serial.print(", ");
+      Serial.println(z);
       return false;
     }
   }

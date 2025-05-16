@@ -167,6 +167,9 @@ struct Quaternion {
     }
 };
 
+// --- Standalone Quaternion Functions ---
+Quaternion slerp(const Quaternion& qa, const Quaternion& qb, float t);
+
 // --- Standalone Quaternion Functions (Inline) ---
 inline Quaternion operator*(const Quaternion& q_left, const Quaternion& q_right) {
     return Quaternion(
@@ -175,6 +178,9 @@ inline Quaternion operator*(const Quaternion& q_left, const Quaternion& q_right)
         q_left.w * q_right.y - q_left.x * q_right.z + q_left.y * q_right.w + q_left.z * q_right.x,
         q_left.w * q_right.z + q_left.x * q_right.y - q_left.y * q_right.x + q_left.z * q_right.w
     );
+}
+inline float dot(const Quaternion& qa, const Quaternion& qb) {
+    return qa.w * qb.w + qa.x * qb.x + qa.y * qb.y + qa.z * qb.z;
 }
 inline Vec3 rotate_vector_by_quaternion(const Vec3& v, const Quaternion& q) {
     Vec3 q_vec = {q.x, q.y, q.z};

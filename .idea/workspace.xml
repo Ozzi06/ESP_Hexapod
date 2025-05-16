@@ -5,34 +5,20 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="b6f0866f-6d0a-4387-89c2-46818ff6bde2" name="Changes" comment="Updated the packet format and made a gui in python to control th hexapod">
-      <change afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/math_utils.cpp" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/math_utils.h" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/walkcycle_wrong" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/.gitignore" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/hexapod_proj.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/hexapod_proj.iml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/modules.xml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/Vec3.h" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/angle_sniffer.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/body_transform.h" beforeDir="false" afterPath="$PROJECT_DIR$/body_transform.h" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/hexapod_gui.py" beforeDir="false" afterPath="$PROJECT_DIR$/hexapod_gui.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/hexapod_proj.ino" beforeDir="false" afterPath="$PROJECT_DIR$/hexapod_proj.ino" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/hexapod_udp_client.py" beforeDir="false" afterPath="$PROJECT_DIR$/hexapod_udp_client.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/ik.h" beforeDir="false" afterPath="$PROJECT_DIR$/ik.h" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/packets.h" beforeDir="false" afterPath="$PROJECT_DIR$/packets.h" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/prompt.txt" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/quat.h" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/math_utils.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/math_utils.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/math_utils.h" beforeDir="false" afterPath="$PROJECT_DIR$/math_utils.h" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/packets.h" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/robot_spec.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/robot_spec.cpp" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/robot_spec.h" beforeDir="false" afterPath="$PROJECT_DIR$/robot_spec.h" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/serial_remote.h" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/servo_wave.h" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/set_pos.h" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/utils.h" beforeDir="false" afterPath="$PROJECT_DIR$/servo_angles.h" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/servo_angles.h" beforeDir="false" afterPath="$PROJECT_DIR$/servo_angles.h" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/walkcycle.h" beforeDir="false" afterPath="$PROJECT_DIR$/walkcycle.h" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/walkcycle_remote.h" beforeDir="false" afterPath="$PROJECT_DIR$/walkcycle_remote.h" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/walkcycle_serial.h" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/walkcycle_remote.h" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/walkcycle_wrong" beforeDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -74,6 +60,7 @@
     &quot;Python.angle_sniffer.executor&quot;: &quot;Run&quot;,
     &quot;Python.hexapod_gui.executor&quot;: &quot;Run&quot;,
     &quot;Python.hexapod_udp_client.executor&quot;: &quot;Run&quot;,
+    &quot;Python.udp_logger.executor&quot;: &quot;Run&quot;,
     &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
     &quot;git-widget-placeholder&quot;: &quot;master&quot;,
     &quot;ignore.virus.scanning.warn.message&quot;: &quot;true&quot;

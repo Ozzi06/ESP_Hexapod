@@ -1,165 +1,172 @@
-//hexapod_proj.ino
-// Suggested servo limits
-
 //#define OSSIAN_HEMMA
-
+// HexapodESP32.ino (or your main sketch file)
+// #############################################################################
+// ### LIBRARIES ###
 #include <WiFi.h>
 #include <WiFiUdp.h>
-#include "servo_angles.h"
-// --- Global Variables ---
-WiFiUDP udp;
+#include "servo_angles.h"       // For setupPwm, servo control
+#include "robot_spec.h"         // For robot constants and global state
+#include "remote_control.h"     // Handles all remote operations
+#include "servo_test_mode.h"    // For the servo test mode
+#include "walkcycle.h"          // For basic walk cycle setup if needed by remote_control
+#include "passwords.h"          // For WiFi credentials
 
-#include "walkcycle_remote.h"
-#include "servo_test_mode.h"
+// #############################################################################
+// ### DEFINES AND GLOBAL VARIABLES ###
 
-// Program states
-enum ProgramState {
-  MAIN_MENU,
-  WALKCYCLE_REMOTE,
-  SERVO_TEST_MODE,
-  // Add more program states here as you create them
+// --- Network ---
+WiFiUDP udp; // UDP instance used by remote_control.cpp as well
+
+// --- Robot Operating Modes ---
+enum RobotOperatingMode {
+  MAIN_MENU,          // Serial command menu
+  REMOTE_CONTROL,     // Default: UDP JSON control, mobile app input
+  SERVO_TEST          // Direct servo control via serial
 };
+RobotOperatingMode currentOperatingMode = REMOTE_CONTROL; // DEFAULT TO REMOTE CONTROL
 
-ProgramState currentState = MAIN_MENU;
+unsigned long lastLoopTimeMicros = 0;
 
-void printMainMenu() {
-  Serial.println("\n===== Main Menu =====");
-  Serial.println("1 - Walkcycle Remote");
-  Serial.println("2 - Servo Test Mode");
-  Serial.println("====================");
-}
-
+// #############################################################################
+// ### SETUP ###
 void setup() {
   Serial.begin(115200);
-  Serial.printf("Connecting to %s ", ssid);
-  WiFi.begin(ssid, password);
-  // ... (WiFi connection loop - same as before) ...
+  while (!Serial && millis() < 2000); // Wait for serial, but timeout
+  Serial.println("\n\n--- Hexapod Control System Booting ---");
+
+  // --- Hardware Initialization ---
+  setupPwm(); // Initialize PCA9685 servo drivers
+  Serial.println("PWM Drivers Initialized.");
+
+  // --- WiFi Connection ---
+  Serial.print("Connecting to WiFi: ");
+  Serial.println(SSID);
+  WiFi.begin(SSID, PASSWORD);
   int wifi_retries = 0;
-  while (WiFi.status() != WL_CONNECTED) {
+  while (WiFi.status() != WL_CONNECTED && wifi_retries < 60) { // Retry for ~30 seconds
     delay(500);
     Serial.print(".");
     wifi_retries++;
-    if (wifi_retries > 20) {
-        Serial.println("\nWiFi Connection Failed! Halting.");
-        while(1) { delay(1000); }
-    }
   }
-  Serial.println(" Connected!");
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
-  setupPwm();
 
-  printMainMenu();
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nWiFi Connected!");
+    Serial.print("IP Address: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("\nWiFi Connection Failed! Remote control will not work.");
+    // Proceeding, but remote mode will be non-functional without WiFi.
+    // Consider a fallback or error state here if WiFi is absolutely critical.
+  }
+
+  // --- Initialize Control Modes ---
+  // setupWalkcycle(); // Basic walkcycle params - called within setupRemoteControl if needed
+  setupRemoteControl();    // Initialize remote control systems (UDP, JSON parsing states)
+  setupServoTestMode(); // Initialize servo test mode (prints help, etc.)
+
+  Serial.println("All systems initialized.");
+
+  // --- Default Operating Mode ---
+  // currentOperatingMode is already set to REMOTE_CONTROL by default.
+  // If you wanted to start in MAIN_MENU for debugging, you'd change the default.
+  if (currentOperatingMode == REMOTE_CONTROL) {
+    Serial.println("Entering Remote Control Mode by default.");
+    // setupRemoteControl() already printed its ready messages.
+  } else if (currentOperatingMode == MAIN_MENU) {
+    printMainMenuHelp();
+  }
+
+  lastLoopTimeMicros = micros();
 }
 
+// #############################################################################
+// ### MAIN LOOP ###
+void loop() {
+  unsigned long startMicros = micros();
 
-void handleMainMenu() {
-  if (Serial.available() > 0) {
-    Serial.println("enter: ");
-    String input = Serial.readStringUntil('\n');
-    input.trim();
-    
-    char input_char;
-    if (input.length() > 0)
-      input_char = input.charAt(0);
-    else input_char = '\n';
-    
-    switch (input_char) {
-      case '1':
-        currentState = WALKCYCLE_REMOTE;
-        setupWalkcycleRemote();
-        break;
-    case '2':
-        currentState = SERVO_TEST_MODE;
-        setupServoTestMode();
-        break;
-        
-      case 'X':
-        // Already in main menu
-        Serial.println("Already in main menu");
-        printMainMenu();
-        break;
-        
-      default:
-        Serial.println("Invalid selection");
-        printMainMenu();
-        break;
-    }
-  }
-}
-
-void stateMachine() {
-switch (currentState) {
+  switch (currentOperatingMode) {
     case MAIN_MENU:
-      handleMainMenu();
-      break;
-
-    case WALKCYCLE_REMOTE:
-      if (!walkcycleRemoteUpdate()) { // If update_serial returns false, exit to main menu
-        Serial.println("walkCycleRemote exited, returning to menu");
-        currentState = MAIN_MENU;
-        printMainMenu();
+      if (processMainMenuCommands()) {
+        // Command processed, potentially changed mode
       }
       break;
 
-    case SERVO_TEST_MODE:
-        if (!servoTestModeUpdate()) {
-            currentState = MAIN_MENU;
-            printMainMenu();
-        }
-        break;
-      
-    // Add more program cases here as you create them
+    case REMOTE_CONTROL:
+      if (!remoteControlUpdate()) { // remoteControlUpdate returns false if it wants to exit
+        Serial.println("Exiting Remote Control Mode, returning to Main Menu.");
+        currentOperatingMode = MAIN_MENU;
+        printMainMenuHelp();
+      }
+      break;
+
+    case SERVO_TEST:
+      if (!servoTestModeUpdate()) { // servoTestModeUpdate returns false if 'X' is entered
+        Serial.println("Exiting Servo Test Mode, returning to Main Menu.");
+        currentOperatingMode = MAIN_MENU;
+        printMainMenuHelp();
+      }
+      break;
+
+    default:
+      Serial.println("[ERROR] Unknown operating mode! Reverting to Main Menu.");
+      currentOperatingMode = MAIN_MENU;
+      printMainMenuHelp();
+      break;
   }
+
+  // Simple loop timing print for performance monitoring (optional)
+  unsigned long endMicros = micros();
+  // if (currentOperatingMode == REMOTE_CONTROL) { // Only print if relevant
+  //   Serial.printf("Loop time: %lu us\n", endMicros - startMicros);
+  // }
+  lastLoopTimeMicros = startMicros; // For dt calculation if needed globally
+
+  // A small delay can be useful if loops are too fast and unthrottled,
+  // but remote_control_update will likely have its own effective rate.
+  // delay(1);
 }
 
-const int VOLTAGE_SENSOR_PIN = 9; // A10 on XIAO ESP32-S3 corresponds to GPIO1
-unsigned long lastVoltagePrintTime = 0;
-const unsigned long voltagePrintInterval = 1000; // 1000 milliseconds = 1 second
+// #############################################################################
+// ### MAIN MENU SERIAL COMMANDS ### (Keep this for fallback)
+void printMainMenuHelp() {
+  Serial.println("\n===== Main Menu =====");
+  Serial.println("Enter command:");
+  Serial.println("  R - Enter Remote Control Mode");
+  Serial.println("  T - Enter Servo Test Mode");
+  Serial.println("  H / ? - Display this help");
+  Serial.println("=====================");
+}
 
-// --- Voltage Divider and ADC Configuration ---
-// IMPORTANT: Verify R1 and R2 match your physical connections!
-// R1 is the resistor from your actual voltage source (Vin) to the ADC pin.
-// R2 is the resistor from the ADC pin to Ground.
-const float R1_OHMS = 10000.0f; // e.g., 10k Ohm
-const float R2_OHMS = 3800.0f;  // e.g., 3.84k Ohm
+bool processMainMenuCommands() {
+  if (Serial.available() > 0) {
+    char command = toupper(Serial.read());
+    while (Serial.available() > 0 && (Serial.peek() == '\n' || Serial.peek() == '\r')) { Serial.read(); } // Clear buffer
 
-const float ADC_VREF = 3.3f;       // ADC reference voltage for ESP32 (usually 3.3V)
-const float ADC_MAX_VALUE = 4095.0f; // ESP32 has a 12-bit ADC (2^12 - 1)
+    Serial.print("MainMenu CMD> "); Serial.println(command);
 
-void loop() {
-  if (millis() - lastVoltagePrintTime >= voltagePrintInterval) {
-    lastVoltagePrintTime = millis(); // Update the last print time
-
-    int sensorValue = analogRead(VOLTAGE_SENSOR_PIN); // Read the analog value (0-4095)
-    
-    // Calculate voltage at the ADC pin
-    float v_at_adc_pin = sensorValue * (ADC_VREF / ADC_MAX_VALUE);
-    
-    // Calculate the actual input voltage before the divider
-    // Vin = V_at_adc_pin * (R1 + R2) / R2
-    float v_in_actual = 0.0f;
-    if (R2_OHMS > 0.001f) { // Avoid division by zero
-          v_in_actual = v_at_adc_pin * (R1_OHMS + R2_OHMS) / R2_OHMS;
+    switch (command) {
+      case 'R':
+        Serial.println("Transitioning to Remote Control Mode...");
+        // setupRemoteControl(); // Should be robust to re-entry or already setup
+        currentOperatingMode = REMOTE_CONTROL;
+        // remote_control specific "entering mode" messages are handled by setupRemoteControl
+        // or when the first packet is received.
+        break;
+      case 'T':
+        Serial.println("Transitioning to Servo Test Mode...");
+        // setupServoTestMode(); // Already called in main setup, prints help
+        currentOperatingMode = SERVO_TEST;
+        printServoTestHelp_STM(); // Re-print help for this mode
+        break;
+      case 'H':
+      case '?':
+        printMainMenuHelp();
+        break;
+      default:
+        Serial.println("Unknown command. Type 'H' or '?' for help.");
+        return false;
     }
-    /*
-    Serial.print("A10(GPIO1) Raw: ");
-    Serial.print(sensorValue);
-    Serial.print(" | V_adc: ");
-    Serial.print(v_at_adc_pin, 2); // Voltage at ADC pin, 2 decimal places
-    Serial.print(" V | Vin_actual: ");
-    Serial.print(v_in_actual, 2);   // Calculated actual input voltage, 2 decimal places
-    Serial.println(" V");*/
+    return true;
   }
-
-  stateMachine();
-  #ifdef OSSIAN_HEMMA
-    // Check if WiFi is connected before attempting to send
-    if (WiFi.status() == WL_CONNECTED && (millis() % 20) == 0) {
-        udp.beginPacket(angleBroadcastIp, angleBroadcastPort);
-        // Send the raw bytes of the entire latestServoAngles array
-        udp.write((uint8_t*)latestServoAngles, sizeof(latestServoAngles));
-        udp.endPacket();
-    }
-  #endif // OSSIAN_HEMMA
+  return false;
 }

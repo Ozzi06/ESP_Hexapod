@@ -23,6 +23,7 @@ struct LegCycleData {
   Vec3 currentPosition;
   Vec3 swingStartPosition;
 };
+extern LegCycleData legCycleData[LEG_COUNT];
 
 extern WalkParams walkParams;
 extern bool walkCycleRunning;
