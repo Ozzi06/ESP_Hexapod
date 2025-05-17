@@ -12,8 +12,9 @@
 extern WiFiUDP udp;
 
 // Configuration
-const unsigned int UDP_LISTEN_PORT = 5005; // Port ESP32 listens on for commands
-const unsigned long GLOBAL_PACKET_TIMEOUT_MS = 7000; // 7 seconds
+constexpr unsigned int UDP_LISTEN_PORT = 5005; // Port ESP32 listens on for commands
+constexpr unsigned int TCP_LISTEN_PORT = 5006; // Port ESP32 listens on for commands
+constexpr unsigned long GLOBAL_PACKET_TIMEOUT_MS = 7000; // 7 seconds
 
 // Function Declarations
 void setupRemoteControl();

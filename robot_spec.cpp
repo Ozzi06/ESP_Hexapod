@@ -39,12 +39,12 @@ Vec3 baseFootPositionWalk[LEG_COUNT] = {
 };
 #else
 Vec3 baseFootPositionWalk[LEG_COUNT] = {
-    { 27.0f, -19.0f, 0.0f}, // Leg 0 (BR)
-    { 32.0f,   0.0f, 0.0f}, // Leg 1 (CR)
-    { 27.0f,  19.0f, 0.0f}, // Leg 2 (FR)
-    {-27.0f, -19.0f, 0.0f}, // Leg 3 (BL)
-    {-32.0f,   0.0f, 0.0f}, // Leg 4 (CL)
-    {-27.0f,  19.0f, 0.0f}  // Leg 5 (FL)
+    { 20.0f, -22.0f, 0.0f}, // Leg 0 (BR)
+    { 27.0f,   0.0f, 0.0f}, // Leg 1 (CR)
+    { 20.0f,  22.0f, 0.0f}, // Leg 2 (FR)
+    {-20.0f, -22.0f, 0.0f}, // Leg 3 (BL)
+    {-27.0f,   0.0f, 0.0f}, // Leg 4 (CL)
+    {-20.0f,  22.0f, 0.0f}  // Leg 5 (FL)
 };
 #endif
 
@@ -83,7 +83,7 @@ const float servo_center_angle[3] = {
 };
 
 // Define global state variables (initial values)
-Vec3 bodyPositionOffset = {0.0f, 0.0f, 10.0f}; // Start 10cm above walk frame origin
+Vec3 bodyPositionOffset = {0.0f, 0.0f, 0.0f}; // Start 0cm above walk frame origin to avoid smashing the ground on startup
 Quaternion bodyOrientation = Quaternion::identity();
 Vec3 bodyVelocity = {0.0f, 0.0f, 0.0f}; // Initialize to zero velocity
 float bodyAngularVelocityYaw = 0.0f;

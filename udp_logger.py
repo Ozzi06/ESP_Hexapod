@@ -117,6 +117,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Hardcode the port as requested
-    target_port = 5005
+    target_port = 5006
 
     udp_sniffer(args.ip, target_port, args.verbose)
