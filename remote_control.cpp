@@ -1,4 +1,5 @@
 // remote_control.cpp
+#include <math.h>
 #include "remote_control.h"
 #include "network_comms.h"  // NEW: For TCP/UDP communications
 #include "math_utils.h"
@@ -16,6 +17,16 @@ static float cfg_max_linear_speed_cms = 8.0f;
 static float cfg_max_yaw_rate_rads = 0.3f;
 static float cfg_pose_adjust_linear_cms = 2.0f;
 static float cfg_pose_adjust_angular_rads = 0.26f; // ~15 deg/s
+static float cfg_linear_acceleration_cm_s2 = 10.0f;
+static float cfg_linear_deceleration_cm_s2 = 20.0f;
+static float cfg_yaw_acceleration_rad_s2 = 30.0f * M_PI / 180.0f; //30deg/s^2
+static float cfg_yaw_deceleration_rad_s2 = 60.0f * M_PI / 180.0f; 
+
+static float cfg_leg_geom_front_corner_x_cm = 20.0f;
+static float cfg_leg_geom_front_corner_y_cm = 23.0f;
+static float cfg_leg_geom_middle_side_x_cm  = 27.0f;
+static float cfg_leg_geom_corner_ext_cm     = 0.0f;
+static float cfg_leg_geom_middle_ext_cm     = 0.0f;
 
 // --- ESP32 Owned Intent/Active State Variables ---
 static float active_target_vx_factor = 0.0f;
@@ -78,6 +89,7 @@ static void translateMobileInputsToActiveIntents();
 static void integrateRobotState(float dt);
 static void sendConfiguredTelemetry();
 static void clear_all_subscriptions(); // Helper to disable all telemetry
+static void calculate_and_update_base_foot_positions_from_abstract_config();
 
 // --- Callbacks for network_comms ---
 
@@ -114,6 +126,7 @@ static void tcp_client_abrupt_disconnect_callback(IPAddress disconnected_client_
 
 void setupRemoteControl() {
   Serial.println("--- Remote Control Mode Setup ---");
+  calculate_and_update_base_foot_positions_from_abstract_config();
   setupWalkcycle();
 
   rc_log_network_packets = false; // Default logging state for remote_control specific logs
@@ -122,7 +135,7 @@ void setupRemoteControl() {
   // Default config speeds
   cfg_max_linear_speed_cms = 8.0f;
   cfg_max_yaw_rate_rads = 0.3f;
-  cfg_pose_adjust_linear_cms = 2.0f;
+  cfg_pose_adjust_linear_cms = 5.0f;
   cfg_pose_adjust_angular_rads = 15.0f * M_PI / 180.0f;
 
   // Default states for subscriptions (before a client configures them)
@@ -325,19 +338,32 @@ static void processConfigUpdate(JsonObjectConst payload) {
     walkParams.stepTime = gait["step_time_s"] | walkParams.stepTime;
     if (rc_log_network_packets) Serial.printf("  Gait params updated: Height=%.1f cm, Time=%.1f s\n", walkParams.stepHeight, walkParams.stepTime);
   }
-  if (payload.containsKey("base_foot_positions_walk_cm")) {
-    JsonArrayConst positions = payload["base_foot_positions_walk_cm"].as<JsonArrayConst>();
-    if (positions && positions.size() == LEG_COUNT) {
-      if (rc_log_network_packets) Serial.println("  Base foot positions updating...");
-      for (uint8_t i = 0; i < LEG_COUNT; ++i) {
-        JsonObjectConst leg_pos = positions[i].as<JsonObjectConst>();
-        if (leg_pos) {
-          baseFootPositionWalk[i].x = leg_pos["x"] | baseFootPositionWalk[i].x;
-          baseFootPositionWalk[i].y = leg_pos["y"] | baseFootPositionWalk[i].y;
-          baseFootPositionWalk[i].z = leg_pos["z"] | baseFootPositionWalk[i].z;
-        }
-      }
-    } else if (rc_log_network_packets) Serial.println("  [WARN] base_foot_positions_walk_cm missing or wrong size.");
+  if (payload.containsKey("leg_geometry_abstract")) {
+     JsonObjectConst geom_abstract = payload["leg_geometry_abstract"].as<JsonObjectConst>();
+     cfg_leg_geom_front_corner_x_cm = geom_abstract["front_corner_x_cm"] | cfg_leg_geom_front_corner_x_cm;
+     cfg_leg_geom_front_corner_y_cm = geom_abstract["front_corner_y_cm"] | cfg_leg_geom_front_corner_y_cm;
+     cfg_leg_geom_middle_side_x_cm  = geom_abstract["middle_side_x_cm"]  | cfg_leg_geom_middle_side_x_cm;
+     cfg_leg_geom_corner_ext_cm     = geom_abstract["corner_ext_cm"]     | cfg_leg_geom_corner_ext_cm;
+     cfg_leg_geom_middle_ext_cm     = geom_abstract["middle_ext_cm"]     | cfg_leg_geom_middle_ext_cm;
+     
+     // After updating abstract params, recalculate the actual baseFootPositionWalk array
+     calculate_and_update_base_foot_positions_from_abstract_config();
+
+     if (rc_log_network_packets) {
+         Serial.println("  Abstract leg geometry updated by GUI. Base foot positions recalculated.");
+     }
+  }
+  if (payload.containsKey("acceleration_values")) {
+     JsonObjectConst accel_vals = payload["acceleration_values"].as<JsonObjectConst>();
+     cfg_linear_acceleration_cm_s2 = accel_vals["linear_accel_cms2"] | cfg_linear_acceleration_cm_s2;
+     cfg_linear_deceleration_cm_s2 = accel_vals["linear_decel_cms2"] | cfg_linear_deceleration_cm_s2;
+     cfg_yaw_acceleration_rad_s2 = accel_vals["yaw_accel_rads2"] | cfg_yaw_acceleration_rad_s2;
+     cfg_yaw_deceleration_rad_s2 = accel_vals["yaw_decel_rads2"] | cfg_yaw_deceleration_rad_s2;
+     if (rc_log_network_packets) {
+         Serial.printf("  Accel values updated: LinAccel=%.1f, LinDecel=%.1f, YawAccel=%.2f, YawDecel=%.2f\n",
+                       cfg_linear_acceleration_cm_s2, cfg_linear_deceleration_cm_s2,
+                       cfg_yaw_acceleration_rad_s2, cfg_yaw_deceleration_rad_s2);
+     }
   }
 }
 
@@ -431,11 +457,24 @@ static void processRequestFullState(IPAddress reply_to_ip) {
     pose_speeds["linear_cms"] = cfg_pose_adjust_linear_cms;
     pose_speeds["angular_rads"] = cfg_pose_adjust_angular_rads;
 
+    JsonObject accel_vals = payload.createNestedObject("acceleration_values");
+    accel_vals["linear_accel_cms2"] = cfg_linear_acceleration_cm_s2;
+    accel_vals["linear_decel_cms2"] = cfg_linear_deceleration_cm_s2;
+    accel_vals["yaw_accel_rads2"] = cfg_yaw_acceleration_rad_s2;
+    accel_vals["yaw_decel_rads2"] = cfg_yaw_deceleration_rad_s2;
+
     JsonObject gait = payload.createNestedObject("gait_params");
     gait["step_height_cm"] = walkParams.stepHeight;
     gait["step_time_s"] = walkParams.stepTime;
     
     payload["walk_active"] = walkCycleRunning; // Current gait command state
+    
+    JsonObject geom_abstract_payload = payload.createNestedObject("leg_geometry_abstract");
+    geom_abstract_payload["front_corner_x_cm"] = cfg_leg_geom_front_corner_x_cm;
+    geom_abstract_payload["front_corner_y_cm"] = cfg_leg_geom_front_corner_y_cm;
+    geom_abstract_payload["middle_side_x_cm"]  = cfg_leg_geom_middle_side_x_cm;
+    geom_abstract_payload["corner_ext_cm"]     = cfg_leg_geom_corner_ext_cm;
+    geom_abstract_payload["middle_ext_cm"]     = cfg_leg_geom_middle_ext_cm;
 
     JsonArray base_pos_array = payload.createNestedArray("base_foot_positions_walk_cm");
     for(int i=0; i<LEG_COUNT; ++i) {
@@ -582,18 +621,83 @@ static void translateMobileInputsToActiveIntents() {
   active_centering_orientation = app_hold_center_rot;
 }
 
-// --- ESP32 State Integration (Unchanged from your version) ---
+// --- ESP32 State Integration ---
 static void integrateRobotState(float dt) {
-  float target_vx = active_target_vx_factor * cfg_max_linear_speed_cms;
-  float target_vy = active_target_vy_factor * cfg_max_linear_speed_cms;
-  float target_yaw = -active_target_yaw_factor * cfg_max_yaw_rate_rads;
+    // Normalize XY target speed
+    float raw_target_vx = active_target_vx_factor * cfg_max_linear_speed_cms;
+    float raw_target_vy = active_target_vy_factor * cfg_max_linear_speed_cms;
+    float target_yaw_speed = -active_target_yaw_factor * cfg_max_yaw_rate_rads;
 
-  float accel_lin = 15.0f * cfg_max_linear_speed_cms * dt; 
-  float accel_ang = 15.0f * cfg_max_yaw_rate_rads * dt;
+    float target_xy_speed_sq = raw_target_vx * raw_target_vx + raw_target_vy * raw_target_vy;
+    float target_vx_final = raw_target_vx;
+    float target_vy_final = raw_target_vy;
 
-  bodyVelocity.x = clampf(bodyVelocity.x + clampf(target_vx - bodyVelocity.x, -accel_lin, accel_lin), -cfg_max_linear_speed_cms, cfg_max_linear_speed_cms);
-  bodyVelocity.y = clampf(bodyVelocity.y + clampf(target_vy - bodyVelocity.y, -accel_lin, accel_lin), -cfg_max_linear_speed_cms, cfg_max_linear_speed_cms);
-  bodyAngularVelocityYaw = clampf(bodyAngularVelocityYaw + clampf(target_yaw - bodyAngularVelocityYaw, -accel_ang, accel_ang), -cfg_max_yaw_rate_rads, cfg_max_yaw_rate_rads);
+    if (target_xy_speed_sq > (cfg_max_linear_speed_cms * cfg_max_linear_speed_cms) && target_xy_speed_sq > 0.001f) {
+        float target_xy_speed_current_magnitude = sqrtf(target_xy_speed_sq);
+        float scale = cfg_max_linear_speed_cms / target_xy_speed_current_magnitude;
+        target_vx_final = raw_target_vx * scale;
+        target_vy_final = raw_target_vy * scale;
+    }
+
+    // --- Linear Velocity X ---
+    float diff_vx = target_vx_final - bodyVelocity.x;
+    float current_accel_x_limit_s2;
+    // Determine if accelerating or decelerating towards the target
+    // If target is in the same direction as current velocity AND magnitude is greater, or starting from near zero: Accelerate
+    // Else (target is in opposite direction, or target is in same direction but smaller magnitude): Decelerate
+    if (fabsf(diff_vx) < 0.01f) { // Already at target or very close
+         current_accel_x_limit_s2 = cfg_linear_deceleration_cm_s2; // Use decel to hold steady if needed
+    } else if ( (diff_vx > 0 && bodyVelocity.x >= -0.01f && target_vx_final > bodyVelocity.x) || // Speeding up in positive direction (or starting positive)
+                (diff_vx < 0 && bodyVelocity.x <=  0.01f && target_vx_final < bodyVelocity.x) ) { // Speeding up in negative direction (or starting negative)
+        current_accel_x_limit_s2 = cfg_linear_acceleration_cm_s2;
+    } else { // Decelerating (current velocity and target difference imply slowing down or reversing)
+        current_accel_x_limit_s2 = cfg_linear_deceleration_cm_s2;
+    }
+    float accel_x_step = current_accel_x_limit_s2 * dt;
+    bodyVelocity.x += clampf(diff_vx, -accel_x_step, accel_x_step);
+
+    // --- Linear Velocity Y ---
+    float diff_vy = target_vy_final - bodyVelocity.y;
+    float current_accel_y_limit_s2;
+    if (fabsf(diff_vy) < 0.01f) {
+         current_accel_y_limit_s2 = cfg_linear_deceleration_cm_s2;
+    } else if ( (diff_vy > 0 && bodyVelocity.y >= -0.01f && target_vy_final > bodyVelocity.y) ||
+                (diff_vy < 0 && bodyVelocity.y <=  0.01f && target_vy_final < bodyVelocity.y) ) {
+        current_accel_y_limit_s2 = cfg_linear_acceleration_cm_s2;
+    } else {
+        current_accel_y_limit_s2 = cfg_linear_deceleration_cm_s2;
+    }
+    float accel_y_step = current_accel_y_limit_s2 * dt;
+    bodyVelocity.y += clampf(diff_vy, -accel_y_step, accel_y_step);
+
+    // Clamp final linear velocities
+    bodyVelocity.x = clampf(bodyVelocity.x, -cfg_max_linear_speed_cms, cfg_max_linear_speed_cms);
+    bodyVelocity.y = clampf(bodyVelocity.y, -cfg_max_linear_speed_cms, cfg_max_linear_speed_cms);
+    
+    // ensuring the magnitude of (bodyVelocity.x, bodyVelocity.y) never exceeds cfg_max_linear_speed_cms:
+    float current_speed_sq = bodyVelocity.x * bodyVelocity.x + bodyVelocity.y * bodyVelocity.y;
+    if (current_speed_sq > (cfg_max_linear_speed_cms * cfg_max_linear_speed_cms) && current_speed_sq > 0.001f) {
+        float current_speed_mag = sqrtf(current_speed_sq);
+        float scale_final = cfg_max_linear_speed_cms / current_speed_mag;
+        bodyVelocity.x *= scale_final;
+        bodyVelocity.y *= scale_final;
+    }
+
+
+    // --- Angular (Yaw) Velocity ---
+    float diff_yaw_speed = target_yaw_speed - bodyAngularVelocityYaw;
+    float current_accel_yaw_limit_s2;
+    if (fabsf(diff_yaw_speed) < 0.001f) { // rad/s threshold
+         current_accel_yaw_limit_s2 = cfg_yaw_deceleration_rad_s2;
+    } else if ( (diff_yaw_speed > 0 && bodyAngularVelocityYaw >= -0.001f && target_yaw_speed > bodyAngularVelocityYaw) ||
+                (diff_yaw_speed < 0 && bodyAngularVelocityYaw <=  0.001f && target_yaw_speed < bodyAngularVelocityYaw) ) {
+        current_accel_yaw_limit_s2 = cfg_yaw_acceleration_rad_s2;
+    } else {
+        current_accel_yaw_limit_s2 = cfg_yaw_deceleration_rad_s2;
+    }
+    float accel_yaw_step = current_accel_yaw_limit_s2 * dt;
+    bodyAngularVelocityYaw += clampf(diff_yaw_speed, -accel_yaw_step, accel_yaw_step);
+    bodyAngularVelocityYaw = clampf(bodyAngularVelocityYaw, -cfg_max_yaw_rate_rads, cfg_max_yaw_rate_rads);
 
   if (active_centering_xy) {
     float linear_centering_step = cfg_pose_adjust_linear_cms * dt;
@@ -736,4 +840,44 @@ static void sendConfiguredTelemetry() {
         } else if (rc_log_network_packets) Serial.println("[RC WARN] Failed to send State/FootPos (UDP)");
     }
   }
+}
+
+static void calculate_and_update_base_foot_positions_from_abstract_config() {
+    // This function uses the static cfg_leg_geom_* variables from this file
+    // and the global const legMountingAngle from robot_spec.h
+    // to update the global baseFootPositionWalk array (also from robot_spec.h).
+
+    Vec3 sym_base_xy[LEG_COUNT] = {
+        { cfg_leg_geom_front_corner_x_cm, -cfg_leg_geom_front_corner_y_cm, 0.0f},
+        { cfg_leg_geom_middle_side_x_cm,   0.0f                          , 0.0f},
+        { cfg_leg_geom_front_corner_x_cm,  cfg_leg_geom_front_corner_y_cm, 0.0f},
+        {-cfg_leg_geom_front_corner_x_cm, -cfg_leg_geom_front_corner_y_cm, 0.0f},
+        {-cfg_leg_geom_middle_side_x_cm,   0.0f                          , 0.0f},
+        {-cfg_leg_geom_front_corner_x_cm,  cfg_leg_geom_front_corner_y_cm, 0.0f}
+    };
+
+    for (uint8_t i = 0; i < LEG_COUNT; ++i) {
+        float base_x = sym_base_xy[i].x;
+        float base_y = sym_base_xy[i].y;
+        
+        float ext_cm = 0.0f;
+        if (i == 0 || i == 2 || i == 3 || i == 5) { // Corner legs BR, FR, BL, FL
+            ext_cm = cfg_leg_geom_corner_ext_cm;
+        } else { // Middle legs MR, ML
+            ext_cm = cfg_leg_geom_middle_ext_cm;
+        }
+        
+        float angle_rad = legMountingAngle[i]; // from robot_spec.h
+
+        // Update the global baseFootPositionWalk array directly
+        baseFootPositionWalk[i].x = base_x + ext_cm * cosf(angle_rad);
+        baseFootPositionWalk[i].y = base_y + ext_cm * sinf(angle_rad);
+        baseFootPositionWalk[i].z = 0.0f; 
+    }
+    if (rc_log_network_packets) { // Optional: print if logging is on
+         Serial.println("[RC] Base foot positions recalculated from abstract geometry:");
+         // for(int i=0; i<LEG_COUNT; ++i) {
+         //    Serial.printf("  Leg %d (%s): X:%.1f Y:%.1f Z:%.1f\n", i, leg_names[i], baseFootPositionWalk[i].x, baseFootPositionWalk[i].y, baseFootPositionWalk[i].z);
+         // }
+    }
 }

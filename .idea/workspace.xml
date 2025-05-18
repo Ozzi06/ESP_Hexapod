@@ -5,15 +5,11 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="b6f0866f-6d0a-4387-89c2-46818ff6bde2" name="Changes" comment="Updated the packet format and made a gui in python to control th hexapod">
-      <change afterPath="$PROJECT_DIR$/tcp_sniffer.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/hexapod_comms_client.py" beforeDir="false" afterPath="$PROJECT_DIR$/hexapod_comms_client.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/hexapod_gui.py" beforeDir="false" afterPath="$PROJECT_DIR$/hexapod_gui.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/hexapod_proj.ino" beforeDir="false" afterPath="$PROJECT_DIR$/hexapod_proj.ino" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/hexapod_udp_client.py" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/remote_control.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/remote_control.cpp" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/remote_control.h" beforeDir="false" afterPath="$PROJECT_DIR$/remote_control.h" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/robot_spec.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/robot_spec.cpp" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/udp_logger.py" beforeDir="false" afterPath="$PROJECT_DIR$/udp_logger.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />

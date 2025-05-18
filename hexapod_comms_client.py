@@ -47,8 +47,8 @@ class HexapodCommsClient(QObject):
         self._is_tcp_connected = False
         self.tcp_receive_buffer = b""
 
-        self.tcp_ping_timer = QTimer(self) # Create the QTimer instance
-        self.tcp_ping_timer.timeout.connect(self.send_ping_tcp) # Connect its timeout signal to a method
+        self.tcp_ping_timer = QTimer(self)  # Create the QTimer instance
+        self.tcp_ping_timer.timeout.connect(self.send_ping_tcp)  # Connect its timeout signal to a method
 
         # For sending initial client_settings for UDP telemetry path (only once per connection session)
         self.sent_udp_telemetry_path_setup = False
@@ -69,14 +69,26 @@ class HexapodCommsClient(QObject):
             s.connect((target_ip_str, 1));
             local_ip = s.getsockname()[0];
             s.close()
-            if local_ip == "0.0.0.0" or local_ip.startswith("127."):
-                return socket.gethostbyname(socket.gethostname())
+            if local_ip == "0.0.0.0" or local_ip.startswith("127."):  # Handle loopback or unspec
+                # Fallback if connected to self or unspecified network
+                hostname = socket.gethostname()
+                try:
+                    # Try to get all IPs for the hostname and filter for non-loopback
+                    all_ips = socket.getaddrinfo(hostname, None, socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_IP)
+                    for res in all_ips:
+                        ip_addr = res[4][0]
+                        if not ip_addr.startswith("127."):
+                            return ip_addr
+                    # If only loopback found, use it
+                    return socket.gethostbyname(hostname)
+                except socket.gaierror:  # Fallback if getaddrinfo fails
+                    return socket.gethostbyname(hostname)  # This might still be 127.0.0.1
             return local_ip
         except Exception:
             try:
                 return socket.gethostbyname(socket.gethostname())
             except socket.gaierror:
-                return "0.0.0.0"
+                return "0.0.0.0"  # Last resort
 
     def get_local_ip_for_telemetry_setup(self):
         """Returns the determined local IP of the GUI machine for ESP setup."""
@@ -103,13 +115,9 @@ class HexapodCommsClient(QObject):
             self.tcp_receive_thread = threading.Thread(target=self._tcp_receive_loop, daemon=True)
             self.tcp_receive_thread.start()
 
-            # Start the ping timer. Interval should be less than ESP32's TCP_CLIENT_TIMEOUT_MS.
-            # If ESP32 timeout is 5s (5000ms), ping every 2-3s.
-            # If ESP32 timeout is 30s (30000ms), ping every 10-15s.
-            # Let's assume ESP32 timeout is currently 5s for your testing:
-            PING_INTERVAL_MS = 2000 # e.g., 2 seconds
+            PING_INTERVAL_MS = 2000
             self.tcp_ping_timer.start(PING_INTERVAL_MS)
-            print(f"[CommsClient DEBUG] TCP Ping Timer Started with interval {PING_INTERVAL_MS} ms.")
+            # print(f"[CommsClient DEBUG] TCP Ping Timer Started with interval {PING_INTERVAL_MS} ms.")
 
             self.tcp_connected_signal.emit()
             print(f"[CommsClient] TCP connected successfully to {self.robot_tcp_addr}.")
@@ -126,14 +134,13 @@ class HexapodCommsClient(QObject):
             return False
 
     def _tcp_receive_loop(self):
-        print("[CommsClient] TCP receive loop started.")
-        # ... (your heartbeat logging can stay) ...
-        should_disconnect_globally = False  # Flag to indicate if main disconnect logic should run
+        # print("[CommsClient] TCP receive loop started.")
+        should_disconnect_globally = False
 
         while self._is_tcp_connected and not self.tcp_receive_stop_event.is_set():
             try:
                 if not self.tcp_socket:
-                    print("[CommsClient DEBUG] TCP socket is None in receive loop. Breaking.")
+                    # print("[CommsClient DEBUG] TCP socket is None in receive loop. Breaking.")
                     should_disconnect_globally = True
                     break
 
@@ -141,12 +148,11 @@ class HexapodCommsClient(QObject):
 
                 if not data:
                     print("[CommsClient] TCP connection closed by ESP32 (recv empty data).")
-                    if self._is_tcp_connected:  # Only emit if we thought we were connected
+                    if self._is_tcp_connected:
                         self.tcp_disconnected_signal.emit("Connection closed by robot")
-                    self._is_tcp_connected = False  # Mark as disconnected
-                    should_disconnect_globally = True  # Signal that full disconnect procedure is needed
+                    self._is_tcp_connected = False
+                    should_disconnect_globally = True
                     break
-                    # No self.disconnect_tcp() here
 
                 self.tcp_receive_buffer += data
                 self._process_tcp_buffer()
@@ -160,38 +166,25 @@ class HexapodCommsClient(QObject):
                 self._is_tcp_connected = False
                 should_disconnect_globally = True
                 break
-                # No self.disconnect_tcp() here
             except Exception as e:
-                if self._is_tcp_connected:  # Only print/emit if we thought we were connected
+                if self._is_tcp_connected:
                     print(f"[CommsClient ERROR] TCP receive loop error: {e}")
                     self.tcp_disconnected_signal.emit(f"Receive Loop Error: {e}")
                 self._is_tcp_connected = False
                 should_disconnect_globally = True
                 break
-                # No self.disconnect_tcp() here
 
-        print(
-            f"[CommsClient] TCP receive loop ended. is_connected: {self._is_tcp_connected}, stop_event: {self.tcp_receive_stop_event.is_set()}")
-
-        # If the loop exited because the socket is bad or connection was lost,
-        # ensure _is_tcp_connected is false and the stop event for this thread is set.
-        # The main disconnect_tcp method, called from the GUI thread (or another thread),
-        # will then handle the join.
+        # print(f"[CommsClient] TCP receive loop ended. is_connected: {self._is_tcp_connected}, stop_event: {self.tcp_receive_stop_event.is_set()}")
         self._is_tcp_connected = False
-        self.tcp_receive_stop_event.set()  # Ensure the event is set if loop exits unexpectedly
-
-        # The actual self.disconnect_tcp() which does the join should be called from
-        # the main thread in response to the tcp_disconnected_signal or when explicitly disconnecting.
+        self.tcp_receive_stop_event.set()
 
     def _process_tcp_buffer(self):
-        # ESP32 sends newline-terminated JSONs over TCP
         while b'\n' in self.tcp_receive_buffer:
             line_bytes, self.tcp_receive_buffer = self.tcp_receive_buffer.split(b'\n', 1)
             line_str = line_bytes.decode('utf-8').strip()
             if line_str:
                 try:
                     json_data = json.loads(line_str)
-                    # print(f"TCP RX (CommsClient): {json_data}") # Debug
                     self.tcp_message_received_signal.emit(json_data)
                 except json.JSONDecodeError as e:
                     print(f"[CommsClient ERROR] TCP JSON decode error: {e}. Data: '{line_str}'")
@@ -199,35 +192,26 @@ class HexapodCommsClient(QObject):
                     print(f"[CommsClient ERROR] TCP processing error: {e}. Data: '{line_str}'")
 
     def disconnect_tcp(self):
-        # print("[CommsClient] disconnect_tcp() called.")
-        self.tcp_ping_timer.stop() # Stop the ping timer on disconnect
-        print("[CommsClient DEBUG] TCP Ping Timer Stopped.")
+        self.tcp_ping_timer.stop()
+        # print("[CommsClient DEBUG] TCP Ping Timer Stopped.")
 
-        if not self.tcp_receive_stop_event.is_set():  # Only set if not already set
-            self.tcp_receive_stop_event.set()  # Signal receive thread to stop
+        if not self.tcp_receive_stop_event.is_set():
+            self.tcp_receive_stop_event.set()
 
-        # Mark as not connected immediately.
-        # This helps prevent race conditions where _send_tcp might try to use a closing socket.
         self._is_tcp_connected = False
 
         if self.tcp_socket:
             try:
-                # self.tcp_socket.shutdown(socket.SHUT_RDWR) # Optional graceful shutdown
                 self.tcp_socket.close()
             except Exception as e:
-                # print(f"[CommsClient WARN] Error closing TCP socket: {e}")
                 pass
             self.tcp_socket = None
 
-        # Check if the current thread is the receive thread. If so, do not join.
         if self.tcp_receive_thread and self.tcp_receive_thread.is_alive() and \
-                threading.current_thread() != self.tcp_receive_thread:  # Important check!
-            # print("[CommsClient] Waiting for TCP receive thread to join...")
-            self.tcp_receive_thread.join(timeout=1.0)  # Increased timeout slightly
-            # if self.tcp_receive_thread.is_alive():
-            #    print("[CommsClient WARN] TCP receive thread did not join.")
+                threading.current_thread() != self.tcp_receive_thread:
+            self.tcp_receive_thread.join(timeout=1.0)
 
-        self.tcp_receive_thread = None  # Clear the thread object
+        self.tcp_receive_thread = None
         self.tcp_receive_buffer = b""
         # print("[CommsClient] TCP disconnected (from disconnect_tcp method).")
 
@@ -244,21 +228,20 @@ class HexapodCommsClient(QObject):
     def _send_tcp(self, message_dict: dict) -> bool:
         if not self.is_tcp_connected():
             print("[CommsClient WARN] TCP not connected. Cannot send message.")
-            # self.tcp_disconnected_signal.emit("Attempted send while disconnected") # Optionally signal GUI
             return False
         try:
-            json_string = json.dumps(message_dict) + "\n"  # ESP32 expects newline terminated
+            json_string = json.dumps(message_dict) + "\n"
             self.tcp_socket.sendall(json_string.encode('utf-8'))
             return True
         except socket.timeout:
             print(f"[CommsClient ERROR] TCP sendall timed out.")
-            self._is_tcp_connected = False  # Assume connection is dead
+            self._is_tcp_connected = False
             self.tcp_disconnected_signal.emit("Send Timeout")
             self.disconnect_tcp()
             return False
         except Exception as e:
             print(f"[CommsClient ERROR] Failed to send TCP message: {e}")
-            self._is_tcp_connected = False  # Assume connection is dead
+            self._is_tcp_connected = False
             self.tcp_disconnected_signal.emit(f"Send Error: {e}")
             self.disconnect_tcp()
             return False
@@ -289,13 +272,20 @@ class HexapodCommsClient(QObject):
             {"type": "gait_command", "source": "python_gui", "payload": {"walk_active": bool(walk_active)}})
 
     def send_config_update(self, max_speeds=None, pose_adjust_speeds=None,
-                           gait_params=None, base_foot_positions=None):  # TCP
+                           gait_params=None, base_foot_positions=None,
+                           acceleration_values=None, leg_geometry_abstract=None):  # TCP
         payload = {}
         if max_speeds: payload["max_speeds"] = max_speeds
         if pose_adjust_speeds: payload["pose_adjust_speeds"] = pose_adjust_speeds
         if gait_params: payload["gait_params"] = gait_params
         if base_foot_positions: payload["base_foot_positions_walk_cm"] = base_foot_positions
-        if not payload: return True  # No actual update to send
+        if acceleration_values: payload["acceleration_values"] = acceleration_values
+        if leg_geometry_abstract: payload["leg_geometry_abstract"] = leg_geometry_abstract
+
+        if not payload:
+            # print("[CommsClient DEBUG] send_config_update called but payload is empty.")
+            return True  # No actual update to send
+        # print(f"[CommsClient DEBUG] Sending config_update with payload: {payload}")
         return self._send_tcp({"type": "config_update", "source": "python_gui", "payload": payload})
 
     def send_pwm_reinitialize_command(self):  # TCP
@@ -303,49 +293,37 @@ class HexapodCommsClient(QObject):
             {"type": "system_command", "source": "python_gui", "payload": {"action": "reinitialize_pwm"}})
 
     def send_client_settings(self, settings_payload: dict):  # TCP
-        """ Sends client settings to ESP32, including telemetry subscriptions and UDP return path info. """
-        # settings_payload is the fully formed payload for the client_settings message
-        # e.g. {"udp_telemetry_config": {...}, "tcp_subscriptions_here": {...}}
-        # The GUI constructs this.
         if 'udp_telemetry_config' in settings_payload:
-            self.sent_udp_telemetry_path_setup = True  # Mark as sent for this session
+            self.sent_udp_telemetry_path_setup = True
         return self._send_tcp({"type": "client_settings", "source": "python_gui", "payload": settings_payload})
 
     def send_request_full_state(self, reply_to_gui_ip: str):  # TCP
-        # reply_to_gui_ip is determined by the GUI and passed here
         return self._send_tcp({"type": "request_full_state", "source": "python_gui", "reply_to_ip": reply_to_gui_ip})
 
     def send_disconnect_notice(self):  # TCP
         if self.is_tcp_connected():
-            # Send the notice then prepare to close on GUI side
-            print("[CommsClient] Sending disconnect_notice to ESP32...")
+            # print("[CommsClient] Sending disconnect_notice to ESP32...")
             success = self._send_tcp({"type": "disconnect_notice", "source": "python_gui",
                                       "payload": {"source_ip": self.client_ip_for_esp_setup}})
-            time.sleep(0.05)  # Give ESP a moment to process it
+            time.sleep(0.05)
             return success
         return False
 
     def send_ping_tcp(self):
         if self.is_tcp_connected():
-            print("[CommsClient DEBUG] Attempting to send TCP Ping to ESP32...")
-            success = self._send_tcp({"type": "ping", "source": "python_gui", "payload": {"ts": time.time()}}) # Added timestamp to payload
-            if success:
-                print("[CommsClient DEBUG] TCP Ping sent successfully.")
-            else:
-                print("[CommsClient DEBUG] TCP Ping FAILED to send.")
-                # If ping send fails, the _send_tcp method should have already handled
-                # marking connection as dead and emitting disconnected signal.
-                # We can also stop the timer here to be sure.
-                self.tcp_ping_timer.stop()
+            # print("[CommsClient DEBUG] Attempting to send TCP Ping to ESP32...")
+            success = self._send_tcp({"type": "ping", "source": "python_gui", "payload": {"ts": time.time()}})
+            # if success:
+            # print("[CommsClient DEBUG] TCP Ping sent successfully.")
+            # else:
+            # print("[CommsClient DEBUG] TCP Ping FAILED to send.")
+            # self.tcp_ping_timer.stop() # Already handled in _send_tcp on failure
         else:
-            # This case should ideally not happen often if connect/disconnect logic is sound,
-            # but good to have.
-            print("[CommsClient DEBUG] TCP Ping: Not connected, stopping timer.")
+            # print("[CommsClient DEBUG] TCP Ping: Not connected, stopping timer.")
             self.tcp_ping_timer.stop()
 
     def close(self):
-        print("[CommsClient] Closing communications...")
-        # Try to send stop intents via UDP
+        # print("[CommsClient] Closing communications...")
         try:
             self.send_locomotion_intent(0, 0, 0);
             time.sleep(0.01)
@@ -353,9 +331,9 @@ class HexapodCommsClient(QObject):
             time.sleep(0.01)
             self.send_centering_intent(False, False)
         except Exception:
-            pass  # Ignore errors during final stop sends
+            pass
 
-        self.disconnect_tcp()  # Handles TCP socket and thread
+        self.disconnect_tcp()
 
         if self.udp_socket:
             try:
@@ -363,4 +341,4 @@ class HexapodCommsClient(QObject):
             except Exception:
                 pass
             self.udp_socket = None
-        print("[CommsClient] Communications closed.")
+        # print("[CommsClient] Communications closed.")

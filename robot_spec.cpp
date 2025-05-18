@@ -7,8 +7,8 @@ const float TIBIA_LENGTH = 10.5; // Length from ankle to foot
 #else
 // Leg mechanical parameters (in cm)
 const float COXA_LENGTH  = 7.0f; // Length from hip to knee joint
-const float FEMUR_LENGTH = 10.0; // Length from knee to ankle joint
-const float TIBIA_LENGTH = 11.6; // Length from ankle to foot
+const float FEMUR_LENGTH = 9.4; // Length from knee to ankle joint
+const float TIBIA_LENGTH = 12.0; // Length from ankle to foot
 #endif
 // Joint angle limits (in radians)
 const float COXA_MIN_ANGLE  =  (-60 * M_PI / 180.0);
@@ -59,12 +59,12 @@ const Vec3 legOriginOffset[LEG_COUNT] = {
 };
 #else
 const Vec3 legOriginOffset[LEG_COUNT] = {
-    {   5.75f,   -7.75f , 0.0f}, // Leg 0(BR)
+    {   5.75f,   -7.85f , 0.0f}, // Leg 0(BR)
     {   7.9f,      0.0f, 0.0f}, // Leg 1(CR)
-    {   5.75f,    7.75f, 0.0f}, // Leg 2(FR)
-    {  -5.75f,   -7.75f, 0.0f}, // Leg 3(BL)
+    {   5.75f,    7.85f, 0.0f}, // Leg 2(FR)
+    {  -5.75f,   -7.85f, 0.0f}, // Leg 3(BL)
     {  -7.9f,      0.0f, 0.0f}, // Leg 4(CL)
-    {  -5.75f,    7.75f, 0.0f}  // Leg 5(FL)
+    {  -5.75f,    7.85f, 0.0f}  // Leg 5(FL)
 };
 #endif
 
