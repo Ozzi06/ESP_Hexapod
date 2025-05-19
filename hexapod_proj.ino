@@ -1,4 +1,4 @@
-#define OSSIAN_HEMMA
+//#define OSSIAN_HEMMA
 // HexapodESP32.ino (or your main sketch file)
 // #############################################################################
 // ### LIBRARIES ###

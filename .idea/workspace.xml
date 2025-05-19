@@ -5,15 +5,10 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="b6f0866f-6d0a-4387-89c2-46818ff6bde2" name="Changes" comment="Updated the packet format and made a gui in python to control th hexapod">
-      <change afterPath="$PROJECT_DIR$/simple_mjpeg_viewer.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/hexapod_comms_client.py" beforeDir="false" afterPath="$PROJECT_DIR$/hexapod_comms_client.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/hexapod_gui.py" beforeDir="false" afterPath="$PROJECT_DIR$/hexapod_gui.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/hexapod_proj.ino" beforeDir="false" afterPath="$PROJECT_DIR$/hexapod_proj.ino" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/network_comms.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/network_comms.cpp" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/network_comms.h" beforeDir="false" afterPath="$PROJECT_DIR$/network_comms.h" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/remote_control.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/remote_control.cpp" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/walkcycle.h" beforeDir="false" afterPath="$PROJECT_DIR$/walkcycle.h" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -50,21 +45,21 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "Python.angle_sniffer.executor": "Run",
-    "Python.hexapod_comms_client.executor": "Run",
-    "Python.hexapod_gui.executor": "Run",
-    "Python.hexapod_udp_client.executor": "Run",
-    "Python.send_command.executor": "Run",
-    "Python.simple_mjpeg_viewer.executor": "Run",
-    "Python.tcp_sniffer.executor": "Run",
-    "Python.udp_logger.executor": "Run",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "git-widget-placeholder": "master",
-    "ignore.virus.scanning.warn.message": "true"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;Python.angle_sniffer.executor&quot;: &quot;Run&quot;,
+    &quot;Python.hexapod_comms_client.executor&quot;: &quot;Run&quot;,
+    &quot;Python.hexapod_gui.executor&quot;: &quot;Run&quot;,
+    &quot;Python.hexapod_udp_client.executor&quot;: &quot;Run&quot;,
+    &quot;Python.send_command.executor&quot;: &quot;Run&quot;,
+    &quot;Python.simple_mjpeg_viewer.executor&quot;: &quot;Run&quot;,
+    &quot;Python.tcp_sniffer.executor&quot;: &quot;Run&quot;,
+    &quot;Python.udp_logger.executor&quot;: &quot;Run&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;master&quot;,
+    &quot;ignore.virus.scanning.warn.message&quot;: &quot;true&quot;
   }
-}]]></component>
+}</component>
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
