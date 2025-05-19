@@ -12,7 +12,7 @@
 // These parameters control the gait characteristics.
 // They can be modified dynamically (e.g., by serial or remote commands).
 struct WalkParams {
-  float stepHeight = 3.0f;
+  float stepHeight = 5.0f;
   float stepTime = 1.0f;
   float dutyFactor = 0.5f; //TODO! remove this
 };

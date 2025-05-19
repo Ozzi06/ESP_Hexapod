@@ -23,48 +23,100 @@ except ImportError:
     sys.exit("Error: Could not find hexapod_comms_client.py.")
 
 # --- Configuration ---
-DEFAULT_ROBOT_TARGET_IP = "192.168.68.121"  # CHANGE THIS TO YOUR ESP32's ACTUAL IP
+DEFAULT_ROBOT_TARGET_IP = "192.168.68.121"
 DEFAULT_ROBOT_TCP_PORT = 5006
 DEFAULT_ROBOT_UDP_PORT = 5005
 DEFAULT_GUI_TELEMETRY_LISTEN_IP = "0.0.0.0"
 DEFAULT_GUI_TELEMETRY_LISTEN_PORT = 5007
+DEFAULT_GUI_DISCOVERY_LISTEN_PORT = 5008  # For robot discovery beacons
 DEFAULT_UPDATE_FREQUENCY_HZ = 20.0
 MIN_UPDATE_FREQUENCY_HZ = 5.0
 MAX_UPDATE_FREQUENCY_HZ = 50.0
 
-# Default GUI reference values for configuration fields
-# These should match the ESP32's initial static defaults in remote_control.cpp
 GUI_REF_MAX_LINEAR_SPEED = 8.0
 GUI_REF_MAX_YAW_RATE = 0.3
 GUI_REF_POSE_ADJUST_SPEED_LINEAR = 2.0
-GUI_REF_POSE_ADJUST_SPEED_ANGULAR = math.radians(15.0)  # approx 0.26 rad/s
+GUI_REF_POSE_ADJUST_SPEED_ANGULAR = math.radians(15.0)
 
 GUI_REF_LINEAR_ACCEL_CMS2 = 10.0
 GUI_REF_LINEAR_DECEL_CMS2 = 20.0
-GUI_REF_YAW_ACCEL_DEGS2 = 30.0  # GUI uses deg/s^2
-GUI_REF_YAW_DECEL_DEGS2 = 60.0  # GUI uses deg/s^2
+GUI_REF_YAW_ACCEL_DEGS2 = 30.0
+GUI_REF_YAW_DECEL_DEGS2 = 60.0
 
 GUI_REF_STEP_HEIGHT_CM = 3.0
 GUI_REF_STEP_TIME_S = 1.0
 
 LEG_NAMES = ["BR", "MR", "FR", "BL", "ML", "FL"]
-# Defaults for abstract leg geometry inputs
 DEFAULT_LEG_POS_FR_X_CM = 27.0
 DEFAULT_LEG_POS_FR_Y_CM = 19.0
 DEFAULT_LEG_POS_MR_X_CM = 32.0
 DEFAULT_LEG_CORNER_EXT_CM = 0.0
 DEFAULT_LEG_MIDDLE_EXT_CM = 0.0
 
-# Leg mounting angles for GUI's calculation display (should match ESP32's legMountingAngle)
-# Order: BR, MR, FR, BL, ML, FL
 ESP_LEG_MOUNTING_ANGLES = [
-    -1 * math.pi / 4.0,  # Leg 0 (BR)
-    0 * math.pi / 4.0,  # Leg 1 (MR)
-    +1 * math.pi / 4.0,  # Leg 2 (FR)
-    -3 * math.pi / 4.0,  # Leg 3 (BL)
-    +4 * math.pi / 4.0,  # Leg 4 (ML)
-    +3 * math.pi / 4.0  # Leg 5 (FL)
+    -1 * math.pi / 4.0, 0 * math.pi / 4.0, +1 * math.pi / 4.0,
+    -3 * math.pi / 4.0, +4 * math.pi / 4.0, +3 * math.pi / 4.0
 ]
+
+
+class DiscoveryReceiverUDP(QObject):
+    discovery_beacon_received_signal = Signal(dict)
+
+    def __init__(self, listen_ip, listen_port):
+        super().__init__()
+        self.listen_ip = listen_ip
+        self.listen_port = listen_port
+        self.running = False
+        self.sock = None
+        self.thread = None
+
+    def start_listening(self):
+        if self.running:
+            return
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            self.sock.bind((self.listen_ip, self.listen_port))
+            self.sock.settimeout(1.0)  # Timeout to allow thread to exit cleanly
+            self.running = True
+            self.thread = threading.Thread(target=self._listen_loop, daemon=True)
+            self.thread.start()
+            print(f"UDP Discovery listener started on {self.listen_ip}:{self.listen_port}")
+        except Exception as e:
+            print(f"[ERROR] UDP Discovery listener bind failed on {self.listen_ip}:{self.listen_port}: {e}")
+            self.running = False
+            if self.sock: self.sock.close(); self.sock = None
+
+    def _listen_loop(self):
+        while self.running:
+            try:
+                data, addr = self.sock.recvfrom(1024)  # Buffer for beacon
+                if data:
+                    try:
+                        json_data = json.loads(data.decode('utf-8'))
+                        if json_data.get("type") == "hexapod_discovery_beacon":
+                            self.discovery_beacon_received_signal.emit(json_data)
+                    except json.JSONDecodeError:
+                        print(f"[WARN UDP Discovery RX] JSON Decode Error. Data: {data[:100]}")
+                    except Exception as e:
+                        print(f"[WARN UDP Discovery RX] Processing error: {e}. Data: {data[:100]}")
+            except socket.timeout:
+                continue  # Allow checking self.running
+            except Exception as e:
+                if self.running:
+                    print(f"[ERROR UDP Discovery RX] Socket error: {e}")
+                break
+        if self.sock:
+            self.sock.close()
+            self.sock = None
+        print("UDP Discovery listener stopped.")
+
+    def stop_listening(self):
+        self.running = False
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=1.5)
+            if self.thread.is_alive():
+                print("[WARN] UDP Discovery listener thread did not join.")
+        self.thread = None
 
 
 class TelemetryReceiverUDP(QObject):
@@ -77,11 +129,9 @@ class TelemetryReceiverUDP(QObject):
         self.running = False
         self.sock = None
         self.thread = None
-        # print(f"TelemetryReceiverUDP initialized to listen on {listen_ip}:{listen_port}")
 
     def start_listening(self):
         if self.running:
-            # print("UDP Telemetry listener already running.")
             return
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
@@ -111,31 +161,28 @@ class TelemetryReceiverUDP(QObject):
             except socket.timeout:
                 continue
             except Exception as e:
-                if self.running:  # Only print if we are supposed to be running
+                if self.running:
                     print(f"[ERROR UDP RX] Socket error: {e}")
-                break  # Exit loop on other socket errors
+                break
         if self.sock:
             self.sock.close()
             self.sock = None
         print("UDP Telemetry listener stopped.")
 
     def stop_listening(self):
-        # print("UDP Telemetry stop_listening called.")
         self.running = False
         if self.thread and self.thread.is_alive():
-            # print("UDP Telemetry joining thread...")
             self.thread.join(timeout=1.5)
             if self.thread.is_alive():
                 print("[WARN] UDP Telemetry listener thread did not join.")
         self.thread = None
-        # print("UDP Telemetry listener thread joined or was None.")
 
 
 class HexapodControllerGUI(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Hexapod Controller GUI v2 (TCP/UDP)")
-        self.setGeometry(30, 30, 1400, 950)  # Adjusted for more content
+        self.setWindowTitle("Hexapod Controller GUI v2.1 (TCP/UDP + Discovery)")
+        self.setGeometry(30, 30, 1400, 950)
 
         self.comms_client = None
         self.udp_intent_timer = QTimer(self)
@@ -146,7 +193,11 @@ class HexapodControllerGUI(QMainWindow):
         )
         self.udp_telemetry_receiver.telemetry_received_signal.connect(self.handle_udp_telemetry)
 
-        # --- Actual State Labels ---
+        self.udp_discovery_receiver = DiscoveryReceiverUDP(
+            DEFAULT_GUI_TELEMETRY_LISTEN_IP, DEFAULT_GUI_DISCOVERY_LISTEN_PORT
+        )
+        self.udp_discovery_receiver.discovery_beacon_received_signal.connect(self.handle_discovery_beacon)
+
         self.actual_battery_voltage_label = QLabel("N/A")
         self.actual_robot_status_label = QLabel("N/A")
         self.actual_velocity_x_label = QLabel("N/A")
@@ -161,16 +212,15 @@ class HexapodControllerGUI(QMainWindow):
         self.actual_orient_z_label = QLabel("N/A")
         self.actual_gait_h_label = QLabel("N/A")
         self.actual_gait_t_label = QLabel("N/A")
-        self.actual_walk_status_label = QLabel("N/A")  # For walkCycleRunning
+        self.actual_walk_status_label = QLabel("N/A")
+        self.rtt_label = QLabel("RTT: N/A ms")  # For RTT display
 
         self.debug_foot_pos_group = None
         self.debug_fp_walk_labels = [{'x': QLabel("X: N/A"), 'y': QLabel("Y: N/A"), 'z': QLabel("Z: N/A")} for _ in
                                      range(LEG_COUNT)]
 
-        # Store all config spinboxes for easy enable/disable/NA management
         self.all_config_spinboxes = []
 
-        # --- Keyboard intent state ---
         self.keys_pressed = set()
         self.loco_intent_vx_factor = 0.0;
         self.loco_intent_vy_factor = 0.0;
@@ -193,9 +243,11 @@ class HexapodControllerGUI(QMainWindow):
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
 
-        # --- Top Row: Connection ---
         connection_group = QGroupBox("Connection")
         connection_layout = QHBoxLayout(connection_group)
+        self.discover_button = QPushButton("Discover Robot")
+        self.discover_button.clicked.connect(self.start_robot_discovery)
+        connection_layout.addWidget(self.discover_button)
         connection_layout.addWidget(QLabel("Robot IP:"))
         self.robot_ip_input = QLineEdit(DEFAULT_ROBOT_TARGET_IP)
         connection_layout.addWidget(self.robot_ip_input)
@@ -224,14 +276,14 @@ class HexapodControllerGUI(QMainWindow):
         connection_layout.addWidget(self.fetch_state_button)
         self.connection_status_label = QLabel("Status: Disconnected")
         connection_layout.addWidget(self.connection_status_label)
+        connection_layout.addWidget(self.rtt_label)  # Add RTT Label
+        self.rtt_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         connection_layout.addStretch(1)
         main_layout.addWidget(connection_group)
 
-        # --- Main Content Area ---
         main_content_widget = QWidget()
         content_layout = QHBoxLayout(main_content_widget)
 
-        # == Column 1: System & Controls ==
         col1_widget = QWidget();
         col1_layout = QVBoxLayout(col1_widget)
         sys_cmd_group = QGroupBox("System Commands");
@@ -251,14 +303,11 @@ class HexapodControllerGUI(QMainWindow):
         instr_layout_v = QVBoxLayout(instructions_group)
         instr_layout_v.addWidget(instructions_label)
         col1_layout.addWidget(instructions_group)
-
         col1_layout.addStretch(1)
         content_layout.addWidget(col1_widget, 2)
 
-        # == Column 2: Robot Configuration (Speeds, Accel, Gait) ==
         col2_widget = QWidget();
         col2_layout = QVBoxLayout(col2_widget)
-
         config_speeds_group = QGroupBox("Config: Speeds & Rates")
         config_speeds_form = QFormLayout(config_speeds_group)
         self.cfg_max_linear_speed_input = QDoubleSpinBox();
@@ -322,11 +371,9 @@ class HexapodControllerGUI(QMainWindow):
         self.all_config_spinboxes.extend([self.cfg_step_height_input, self.cfg_step_time_input])
         self.cfg_step_height_input.valueChanged.connect(self.send_gait_configs_auto)
         self.cfg_step_time_input.valueChanged.connect(self.send_gait_configs_auto)
-
         col2_layout.addStretch(1)
         content_layout.addWidget(col2_widget, 3)
 
-        # == Column 3: Robot Config - Geometry ==
         col3_widget = QWidget();
         col3_layout = QVBoxLayout(col3_widget)
         leg_base_geom_group = QGroupBox("Config: Leg Base Geometry (Abstract, cm)")
@@ -334,23 +381,23 @@ class HexapodControllerGUI(QMainWindow):
         self.cfg_leg_front_corner_x = QDoubleSpinBox();
         self.cfg_leg_front_corner_x.setRange(-50, 50);
         self.cfg_leg_front_corner_x.setDecimals(1)
-        leg_base_geom_form.addRow("Front Corner X:", self.cfg_leg_front_corner_x)  # Units in group title
+        leg_base_geom_form.addRow("Front Corner X:", self.cfg_leg_front_corner_x)
         self.cfg_leg_front_corner_y = QDoubleSpinBox();
         self.cfg_leg_front_corner_y.setRange(-50, 50);
         self.cfg_leg_front_corner_y.setDecimals(1)
-        leg_base_geom_form.addRow("Front Corner Y:", self.cfg_leg_front_corner_y)  # Units in group title
+        leg_base_geom_form.addRow("Front Corner Y:", self.cfg_leg_front_corner_y)
         self.cfg_leg_middle_side_x = QDoubleSpinBox();
         self.cfg_leg_middle_side_x.setRange(-50, 50);
         self.cfg_leg_middle_side_x.setDecimals(1)
-        leg_base_geom_form.addRow("Middle Side X:", self.cfg_leg_middle_side_x)  # Units in group title
+        leg_base_geom_form.addRow("Middle Side X:", self.cfg_leg_middle_side_x)
         self.cfg_leg_corner_ext = QDoubleSpinBox();
         self.cfg_leg_corner_ext.setRange(-10, 10)
         self.cfg_leg_corner_ext.setDecimals(1)
-        leg_base_geom_form.addRow("Corner Legs Ext:", self.cfg_leg_corner_ext)  # Units in group title
+        leg_base_geom_form.addRow("Corner Legs Ext:", self.cfg_leg_corner_ext)
         self.cfg_leg_middle_ext = QDoubleSpinBox();
         self.cfg_leg_middle_ext.setRange(-10, 10);
         self.cfg_leg_middle_ext.setDecimals(1)
-        leg_base_geom_form.addRow("Middle Legs Ext:", self.cfg_leg_middle_ext)  # Units in group title
+        leg_base_geom_form.addRow("Middle Legs Ext:", self.cfg_leg_middle_ext)
         col3_layout.addWidget(leg_base_geom_group)
         self.all_config_spinboxes.extend(
             [self.cfg_leg_front_corner_x, self.cfg_leg_front_corner_y, self.cfg_leg_middle_side_x,
@@ -372,11 +419,9 @@ class HexapodControllerGUI(QMainWindow):
             rowLayout.addWidget(self.gui_base_pos_labels[i]['z'])
             gui_base_pos_form.addRow(f"Leg {i} ({LEG_NAMES[i]}):", rowLayout)
         col3_layout.addWidget(gui_base_pos_group)
-
         col3_layout.addStretch(1)
         content_layout.addWidget(col3_widget, 3)
 
-        # == Column 4: Telemetry Subscriptions & Display ==
         col4_widget = QWidget();
         col4_layout = QVBoxLayout(col4_widget)
         telemetry_config_group = QGroupBox("Telemetry Subscriptions")
@@ -417,7 +462,6 @@ class HexapodControllerGUI(QMainWindow):
         col4_layout.addStretch(1)
         content_layout.addWidget(col4_widget, 3)
 
-        # == Column 5: Actual State & Debug Display ==
         col5_widget = QWidget();
         col5_layout = QVBoxLayout(col5_widget)
         actual_state_group = QGroupBox("Robot Actual State (from Telemetry)")
@@ -450,13 +494,11 @@ class HexapodControllerGUI(QMainWindow):
             lambda state: self.debug_foot_pos_group.setVisible(state == Qt.CheckState.Checked.value)
         )
         col5_layout.addWidget(self.debug_foot_pos_group)
-
         col5_layout.addStretch(1)
         content_layout.addWidget(col5_widget, 3)
 
         main_layout.addWidget(main_content_widget)
 
-        # --- Bottom Row: Terminal Log ---
         self.terminal_log_area = QTextEdit()
         self.terminal_log_area.setReadOnly(True)
         self.terminal_log_area.setFixedHeight(100)
@@ -482,21 +524,22 @@ class HexapodControllerGUI(QMainWindow):
         self.robot_ip_input.setEnabled(True)
         self.robot_tcp_port_input.setEnabled(True)
         self.robot_udp_port_input.setEnabled(True)
+        self.discover_button.setEnabled(True)
         self.connect_button.setText("Connect")
         self.fetch_state_button.setEnabled(False)
         self.connection_status_label.setText("Status: Disconnected")
         self.connection_status_label.setStyleSheet("color: black")
+        self.rtt_label.setText("RTT: N/A ms")
 
         for sb in self.all_config_spinboxes:
-            sb.blockSignals(True)  # Block signals before changing value
+            sb.blockSignals(True)
             sb.setEnabled(False)
             sb.setSpecialValueText("N/A")
-            # Set to a consistent value for N/A display (e.g., 0 if in range, else min)
             if sb.minimum() <= 0.0 and sb.maximum() >= 0.0:
                 sb.setValue(0.0)
             else:
                 sb.setValue(sb.minimum())
-            sb.blockSignals(False)  # Unblock signals
+            sb.blockSignals(False)
 
         self.pwm_reset_button.setEnabled(False)
         for label in [self.actual_battery_voltage_label, self.actual_robot_status_label,
@@ -517,30 +560,64 @@ class HexapodControllerGUI(QMainWindow):
         self.robot_ip_input.setEnabled(False);
         self.robot_tcp_port_input.setEnabled(False);
         self.robot_udp_port_input.setEnabled(False)
+        self.discover_button.setEnabled(False)
         self.connect_button.setText("Disconnect")
         self.fetch_state_button.setEnabled(True)
+        self.rtt_label.setText("RTT: Pinging...")
 
         for sb in self.all_config_spinboxes:
-            sb.blockSignals(True)  # Block signals before changing value
+            sb.blockSignals(True)
             sb.setEnabled(False)
             sb.setSpecialValueText("N/A")
-            # Set to a consistent value for N/A display
             if sb.minimum() <= 0.0 and sb.maximum() >= 0.0:
                 sb.setValue(0.0)
             else:
                 sb.setValue(sb.minimum())
-            sb.blockSignals(False)  # Unblock signals
+            sb.blockSignals(False)
 
         self.pwm_reset_button.setEnabled(True)
 
     def set_ui_for_synced_state(self):
         self.log_to_terminal("UI set to synced state.")
         self.fetch_state_button.setEnabled(True)
-        # Values are already set by populate_gui_from_full_state
         for sb in self.all_config_spinboxes:
             sb.setEnabled(True)
-            sb.setSpecialValueText("")  # Clear "N/A" text
+            sb.setSpecialValueText("")
         self.pwm_reset_button.setEnabled(True)
+
+    @Slot()
+    def start_robot_discovery(self):
+        self.log_to_terminal("Starting robot discovery...")
+        self.udp_discovery_receiver.start_listening()
+        self.discover_button.setEnabled(False)  # Disable while listening
+        self.discover_button.setText("Discovering...")
+        # Optional: Timeout for discovery
+        QTimer.singleShot(5000, self.stop_robot_discovery_if_not_found)  # Stop after 5s if no beacon
+
+    @Slot(dict)
+    def handle_discovery_beacon(self, beacon_json: dict):
+        self.log_to_terminal(f"Robot discovery beacon received: {beacon_json}")
+        ip = beacon_json.get("ip")
+        tcp_port = beacon_json.get("tcp_port")
+        udp_port = beacon_json.get("udp_port")
+
+        if ip and tcp_port and udp_port:
+            self.robot_ip_input.setText(ip)
+            self.robot_tcp_port_input.setText(str(tcp_port))
+            self.robot_udp_port_input.setText(str(udp_port))
+            self.log_to_terminal(f"Populated connection fields from beacon: IP={ip}, TCP={tcp_port}, UDP={udp_port}")
+
+        self.udp_discovery_receiver.stop_listening()  # Stop after first beacon
+        self.discover_button.setEnabled(True)
+        self.discover_button.setText("Discover Robot")
+
+    @Slot()
+    def stop_robot_discovery_if_not_found(self):
+        if self.udp_discovery_receiver.running:  # Check if it's still running
+            self.log_to_terminal("Robot discovery timeout. No beacon received.")
+            self.udp_discovery_receiver.stop_listening()
+            self.discover_button.setEnabled(True)
+            self.discover_button.setText("Discover Robot")
 
     @Slot()
     def toggle_connection(self):
@@ -558,6 +635,7 @@ class HexapodControllerGUI(QMainWindow):
                 return
 
             self.connect_button.setEnabled(False);
+            self.discover_button.setEnabled(False)  # Disable discovery during connection attempt
             self.connection_status_label.setText(f"Status: Connecting to {robot_ip}...");
             self.connection_status_label.setStyleSheet("color: orange")
             self.log_to_terminal(f"Attempting connection to {robot_ip} (TCP:{robot_tcp_port}, UDP:{robot_udp_port})")
@@ -567,23 +645,23 @@ class HexapodControllerGUI(QMainWindow):
             self.comms_client.tcp_connected_signal.connect(self.handle_tcp_conn_success)
             self.comms_client.tcp_disconnected_signal.connect(self.handle_tcp_conn_loss)
             self.comms_client.tcp_message_received_signal.connect(self.handle_tcp_message_from_esp)
+            self.comms_client.rtt_updated_signal.connect(self.handle_rtt_update)
 
             if not self.comms_client.connect_tcp():
-                # connect_tcp already emits tcp_disconnected_signal which calls handle_tcp_conn_loss
-                # handle_tcp_conn_loss will re-enable the button and set UI.
-                # So, no need to explicitly enable button here if connect_tcp fails.
+                # handle_tcp_conn_loss (called via signal) will re-enable buttons.
                 pass
         else:
             self.log_to_terminal("Disconnecting...")
             if self.comms_client:
                 self.comms_client.send_disconnect_notice();
-                time.sleep(0.05)  # Give a moment for the notice to be sent
-                self.comms_client.close();  # This will trigger disconnect_tcp in comms_client
+                time.sleep(0.05)
+                self.comms_client.close();
                 self.comms_client = None
             self.udp_intent_timer.stop()
             self.udp_telemetry_receiver.stop_listening()
-            self.set_ui_for_disconnected_state()  # This resets button text and status
-            self.connect_button.setEnabled(True)  # Ensure button is enabled after disconnect
+            self.set_ui_for_disconnected_state()
+            self.connect_button.setEnabled(True)
+            self.discover_button.setEnabled(True)
             self.log_to_terminal("Disconnected.")
 
     @Slot()
@@ -592,14 +670,14 @@ class HexapodControllerGUI(QMainWindow):
         self.connection_status_label.setText("Status: TCP Connected. Initializing...");
         self.connection_status_label.setStyleSheet("color: darkGreen")
 
-        self.set_ui_for_connected_but_unsynced_state()  # This now correctly blocks signals
-        self.connect_button.setEnabled(True)  # Connection attempt finished, re-enable button (now as "Disconnect")
+        self.set_ui_for_connected_but_unsynced_state()
+        self.connect_button.setEnabled(True)
 
         self.udp_telemetry_receiver.start_listening()
-        self.send_client_settings_to_robot()  # Configure telemetry on robot
-        time.sleep(0.05)  # Brief pause
-        self.request_full_state_from_robot()  # Request initial state
-        self.update_udp_intent_timer_interval()  # Setup intent timer
+        self.send_client_settings_to_robot()
+        time.sleep(0.05)
+        self.request_full_state_from_robot()
+        self.update_udp_intent_timer_interval()
         self.udp_intent_timer.start()
 
     @Slot(str)
@@ -607,17 +685,21 @@ class HexapodControllerGUI(QMainWindow):
         self.log_to_terminal(f"TCP Connection Lost/Failed: {reason}")
         self.connection_status_label.setText(f"Status: TCP Error - {reason}");
         self.connection_status_label.setStyleSheet("color: red")
+        self.rtt_label.setText("RTT: N/A ms")
 
         self.udp_intent_timer.stop()
         if self.comms_client:
-            # Comms client's disconnect_tcp might have already been called if error originated there.
-            # Calling close() ensures all resources are released if not already.
-            self.comms_client.close()
+            self.comms_client.close()  # Ensures all comms client resources are freed
             self.comms_client = None
 
         self.udp_telemetry_receiver.stop_listening()
-        self.set_ui_for_disconnected_state()  # Resets UI elements including button text
-        self.connect_button.setEnabled(True)  # Ensure button is usable for new connection attempt
+        self.set_ui_for_disconnected_state()
+        self.connect_button.setEnabled(True)
+        self.discover_button.setEnabled(True)  # Re-enable discovery on disconnect
+
+    @Slot(float)
+    def handle_rtt_update(self, rtt_ms: float):
+        self.rtt_label.setText(f"RTT: {rtt_ms:.0f} ms")
 
     @Slot(dict)
     def handle_tcp_message_from_esp(self, message_json: dict):
@@ -629,7 +711,7 @@ class HexapodControllerGUI(QMainWindow):
             self.populate_gui_from_full_state(payload)
             self.connection_status_label.setText("Status: Connected & Synced");
             self.connection_status_label.setStyleSheet("color: green")
-            self.set_ui_for_synced_state()  # This enables spinboxes and clears "N/A"
+            self.set_ui_for_synced_state()
             self.log_to_terminal("Robot state synchronized with GUI.")
         elif msg_type == "telemetry_data" and payload:
             if "battery" in payload:
@@ -644,8 +726,6 @@ class HexapodControllerGUI(QMainWindow):
                 self.actual_robot_status_label.setText(f"RSSI:{rssi}, Ctrl:{ctrl}")
 
     def populate_gui_from_full_state(self, payload: dict):
-        # Block signals on all config spinboxes to prevent them from firing
-        # their valueChanged signals when we programmatically set their values.
         for sb in self.all_config_spinboxes: sb.blockSignals(True)
 
         if "max_speeds" in payload:
@@ -679,12 +759,7 @@ class HexapodControllerGUI(QMainWindow):
             self.cfg_leg_middle_ext.setValue(geom_data.get("middle_ext_cm", DEFAULT_LEG_MIDDLE_EXT_CM))
             self.log_to_terminal("Populated GUI abstract leg geometry inputs from robot state.")
 
-        # Base foot positions are calculated by GUI based on abstract geometry,
-        # or could be received if ESP sends them directly (not currently implemented for this field from ESP to GUI state)
-        # if "base_foot_positions_walk_cm" in payload and isinstance(payload["base_foot_positions_walk_cm"], list):
-        #     pass # Example: Could populate some other display if needed
-
-        if "current_body_pose" in payload:  # This is more for actual telemetry, but could be part of full state
+        if "current_body_pose" in payload:
             pose = payload["current_body_pose"]
             if "position_offset_cm" in pose:
                 self.actual_pos_x_label.setText(f"{pose['position_offset_cm'].get('x', 0):.2f} cm")
@@ -696,13 +771,10 @@ class HexapodControllerGUI(QMainWindow):
                 self.actual_orient_y_label.setText(f"{pose['orientation_quat'].get('y', 0):.3f}")
                 self.actual_orient_z_label.setText(f"{pose['orientation_quat'].get('z', 0):.3f}")
 
-        walk_is_active = payload.get("walk_active", False)  # From full state
+        walk_is_active = payload.get("walk_active", False)
         self.update_walk_active_display(walk_is_active)
 
-        # Unblock signals now that values are set
         for sb in self.all_config_spinboxes: sb.blockSignals(False)
-
-        # Update GUI calculated display based on newly populated abstract geometry
         self.update_gui_calculated_base_pos_display()
 
     def update_walk_active_display(self, is_active: bool):
@@ -733,12 +805,11 @@ class HexapodControllerGUI(QMainWindow):
                     self.actual_orient_x_label.setText(f"{orient.get('x', 0):.3f}")
                     self.actual_orient_y_label.setText(f"{orient.get('y', 0):.3f}")
                     self.actual_orient_z_label.setText(f"{orient.get('z', 0):.3f}")
-            if "gait_actual" in payload:  # Gait params can also come from UDP telemetry
+            if "gait_actual" in payload:
                 gait = payload["gait_actual"]
-                # Update actual display labels
                 self.actual_gait_h_label.setText(f"{gait.get('step_height_cm', 0):.1f} cm")
                 self.actual_gait_t_label.setText(f"{gait.get('step_time_s', 0):.1f} s")
-                self.update_walk_active_display(gait.get('walk_active', False))  # walk_active status from telemetry
+                self.update_walk_active_display(gait.get('walk_active', False))
 
             if "debug_foot_pos_walk_cm" in payload:
                 fp_walk_data = payload["debug_foot_pos_walk_cm"]
@@ -759,12 +830,12 @@ class HexapodControllerGUI(QMainWindow):
             try:
                 freq_hz = self.update_freq_input.value()
                 if freq_hz < MIN_UPDATE_FREQUENCY_HZ: freq_hz = MIN_UPDATE_FREQUENCY_HZ
-                if freq_hz > MAX_UPDATE_FREQUENCY_HZ: freq_hz = MAX_UPDATE_FREQUENCY_HZ  # Ensure max is also respected
+                if freq_hz > MAX_UPDATE_FREQUENCY_HZ: freq_hz = MAX_UPDATE_FREQUENCY_HZ
                 self.udp_intent_timer.setInterval(int(1000.0 / freq_hz))
             except ZeroDivisionError:
                 self.udp_intent_timer.setInterval(int(1000.0 / DEFAULT_UPDATE_FREQUENCY_HZ))
             except Exception:
-                pass  # Or log error
+                pass
 
     def keyPressEvent(self, event: QKeyEvent):
         if not self.comms_client or not self.comms_client.is_tcp_connected(): return
@@ -777,8 +848,6 @@ class HexapodControllerGUI(QMainWindow):
                 new_desired_state = not robot_is_walking
                 if self.comms_client.send_gait_command(new_desired_state):
                     self.log_to_terminal(f"TX TCP: GaitCommand walk_active: {new_desired_state}")
-                    # Optimistically update GUI, or wait for telemetry confirmation
-                    # self.update_walk_active_display(new_desired_state) # Optional: optimistic update
 
     def keyReleaseEvent(self, event: QKeyEvent):
         if not event.isAutoRepeat():
@@ -799,7 +868,6 @@ class HexapodControllerGUI(QMainWindow):
         modifiers = QApplication.keyboardModifiers();
         shift_pressed = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
 
-        # Pose adjust X/Y (arrows)
         self.pose_adjust_intent_offset_y = 0.0
         if Qt.Key.Key_Up in self.keys_pressed and not shift_pressed: self.pose_adjust_intent_offset_y = 1.0
         if Qt.Key.Key_Down in self.keys_pressed and not shift_pressed: self.pose_adjust_intent_offset_y = -1.0
@@ -808,7 +876,6 @@ class HexapodControllerGUI(QMainWindow):
         if Qt.Key.Key_Left in self.keys_pressed and not shift_pressed: self.pose_adjust_intent_offset_x = -1.0
         if Qt.Key.Key_Right in self.keys_pressed and not shift_pressed: self.pose_adjust_intent_offset_x = 1.0
 
-        # Pose adjust Z (Shift + arrows Up/Down)
         self.pose_adjust_intent_offset_z = 0.0
         if Qt.Key.Key_Up in self.keys_pressed and shift_pressed: self.pose_adjust_intent_offset_z = 1.0
         if Qt.Key.Key_Down in self.keys_pressed and shift_pressed: self.pose_adjust_intent_offset_z = -1.0
@@ -825,7 +892,7 @@ class HexapodControllerGUI(QMainWindow):
 
     @Slot()
     def send_active_intents_udp(self):
-        if not self.comms_client or not self.comms_client.is_tcp_connected(): return  # Guard: only send if connected
+        if not self.comms_client or not self.comms_client.is_tcp_connected(): return
 
         self.comms_client.send_locomotion_intent(self.loco_intent_vx_factor, self.loco_intent_vy_factor,
                                                  self.loco_intent_yaw_factor)
@@ -837,10 +904,8 @@ class HexapodControllerGUI(QMainWindow):
     @Slot()
     def send_movement_configs_auto(self):
         if self.comms_client and self.comms_client.is_tcp_connected():
-            # Check if the sender is enabled (i.e., GUI is in synced state)
             sender_spinbox = self.sender()
             if sender_spinbox and not sender_spinbox.isEnabled():
-                # self.log_to_terminal("DEBUG: Movement config change ignored (sender disabled).")
                 return
 
             max_speeds = {"linear_cms": self.cfg_max_linear_speed_input.value(),
@@ -855,7 +920,6 @@ class HexapodControllerGUI(QMainWindow):
         if self.comms_client and self.comms_client.is_tcp_connected():
             sender_spinbox = self.sender()
             if sender_spinbox and not sender_spinbox.isEnabled():
-                # self.log_to_terminal("DEBUG: Accel config change ignored (sender disabled).")
                 return
 
             accel_payload = {
@@ -872,7 +936,6 @@ class HexapodControllerGUI(QMainWindow):
         if self.comms_client and self.comms_client.is_tcp_connected():
             sender_spinbox = self.sender()
             if sender_spinbox and not sender_spinbox.isEnabled():
-                # self.log_to_terminal("DEBUG: Gait config change ignored (sender disabled).")
                 return
 
             gait_p = {"step_height_cm": self.cfg_step_height_input.value(),
@@ -882,11 +945,10 @@ class HexapodControllerGUI(QMainWindow):
 
     @Slot()
     def send_leg_geometry_configs_auto(self):
-        self.update_gui_calculated_base_pos_display()  # Update GUI display immediately
+        self.update_gui_calculated_base_pos_display()
         if self.comms_client and self.comms_client.is_tcp_connected():
             sender_spinbox = self.sender()
             if sender_spinbox and not sender_spinbox.isEnabled():
-                # self.log_to_terminal("DEBUG: Leg Geom config change ignored (sender disabled).")
                 return
 
             abstract_geom_payload = {
@@ -900,8 +962,6 @@ class HexapodControllerGUI(QMainWindow):
                 self.log_to_terminal(f"TX TCP Config: Abstract Leg Geometry Update")
 
     def update_gui_calculated_base_pos_display(self):
-        # This method now safely reads values from spinboxes that might be disabled
-        # or have special text, but their underlying .value() should be correct.
         self.calculated_base_positions = []
         fr_x = self.cfg_leg_front_corner_x.value();
         fr_y = self.cfg_leg_front_corner_y.value()
@@ -910,35 +970,18 @@ class HexapodControllerGUI(QMainWindow):
         middle_ext = self.cfg_leg_middle_ext.value()
 
         sym_base_xy = [
-            (fr_x, -fr_y), (mr_x, 0.0), (fr_x, fr_y),  # Right side: BR, MR, FR
-            (-fr_x, -fr_y), (-mr_x, 0.0), (-fr_x, fr_y)  # Left side: BL, ML, FL (as per LEG_NAMES order)
+            (fr_x, -fr_y), (mr_x, 0.0), (fr_x, fr_y),
+            (-fr_x, -fr_y), (-mr_x, 0.0), (-fr_x, fr_y)
         ]
-
-        # Ensure ESP_LEG_MOUNTING_ANGLES matches BR, MR, FR, BL, ML, FL if sym_base_xy is ordered this way
-        # Current ESP_LEG_MOUNTING_ANGLES order: BR, MR, FR, BL, ML, FL - matches LEG_NAMES
-        # Current sym_base_xy order seems to be:
-        # Leg 0 (BR): (fr_x, -fr_y)
-        # Leg 1 (MR): (mr_x, 0)
-        # Leg 2 (FR): (fr_x, fr_y)
-        # Leg 3 (BL): (-fr_x, -fr_y)
-        # Leg 4 (ML): (-mr_x, 0)
-        # Leg 5 (FL): (-fr_x, fr_y)
-        # This mapping appears correct.
-
         for i in range(LEG_COUNT):
             base_x, base_y = sym_base_xy[i]
-            # Determine if it's a corner leg (0, 2, 3, 5) or middle leg (1, 4)
-            # Based on LEG_NAMES = ["BR", "MR", "FR", "BL", "ML", "FL"]
-            # Corner legs: BR (0), FR (2), BL (3), FL (5)
-            # Middle legs: MR (1), ML (4)
-            is_middle_leg = (LEG_NAMES[i] == "MR" or LEG_NAMES[i] == "ML")  # or i == 1 or i == 4
-
+            is_middle_leg = (LEG_NAMES[i] == "MR" or LEG_NAMES[i] == "ML")
             ext = middle_ext if is_middle_leg else corner_ext
             angle_rad = ESP_LEG_MOUNTING_ANGLES[i]
 
             final_x = base_x + ext * math.cos(angle_rad);
             final_y = base_y + ext * math.sin(angle_rad);
-            final_z = 0.0  # Assuming base Z is 0 in this context
+            final_z = 0.0
 
             self.calculated_base_positions.append({'x': final_x, 'y': final_y, 'z': final_z})
             self.gui_base_pos_labels[i]['x'].setText(f"X:{final_x:.1f}");
@@ -996,7 +1039,6 @@ class HexapodControllerGUI(QMainWindow):
             if self.comms_client.send_client_settings(final_settings_payload_refined):
                 self.log_to_terminal(f"TX TCP: Sent client_settings (UDP telemetry to {gui_ip}:{gui_udp_listen_port}).")
 
-            # Update visibility of debug group based on new setting
             self.debug_foot_pos_group.setVisible(self.sub_debug_foot_pos_check.isChecked())
 
         except ValueError:
@@ -1021,13 +1063,14 @@ class HexapodControllerGUI(QMainWindow):
     def closeEvent(self, event: QCloseEvent):
         self.log_to_terminal("Close event: Shutting down...")
         self.udp_intent_timer.stop()
-        self.udp_telemetry_receiver.stop_listening()  # Stop UDP telemetry listener
+        self.udp_telemetry_receiver.stop_listening()
+        self.udp_discovery_receiver.stop_listening()  # Stop discovery listener on close
 
         if self.comms_client:
             if self.comms_client.is_tcp_connected():
                 self.comms_client.send_disconnect_notice();
-                time.sleep(0.1)  # Give a moment for the notice
-            self.comms_client.close()  # This handles TCP socket and thread in comms_client
+                time.sleep(0.1)
+            self.comms_client.close()
             self.comms_client = None
 
         event.accept()

@@ -27,12 +27,21 @@ RobotOperatingMode currentOperatingMode = REMOTE_CONTROL; // DEFAULT TO REMOTE C
 
 unsigned long lastLoopTimeMicros = 0;
 
+// --- LED Status ---
+// Using LED_BUILTIN, which is typically GPIO 2 for ESP32, but check your board.
+// If LED_BUILTIN is not defined or incorrect for your board, define it manually:
+// const int LED_PIN = 2; // Example for standard ESP32 dev kit
+// #define LED_BUILTIN LED_PIN (if not already defined by board package)
+
 // #############################################################################
 // ### SETUP ###
 void setup() {
   Serial.begin(115200);
   while (!Serial && millis() < 2000); // Wait for serial, but timeout
   Serial.println("\n\n--- Hexapod Control System Booting ---");
+
+  pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, LOW); // Start with LED off
 
   // --- Hardware Initialization ---
   setupPwm(); // Initialize PCA9685 servo drivers
@@ -43,7 +52,10 @@ void setup() {
   Serial.println(SSID);
   WiFi.begin(SSID, PASSWORD);
   int wifi_retries = 0;
+  bool led_state = false; // For blinking during connection attempt
   while (WiFi.status() != WL_CONNECTED && wifi_retries < 60) { // Retry for ~30 seconds
+    digitalWrite(LED_BUILTIN, led_state);
+    led_state = !led_state;
     delay(500);
     Serial.print(".");
     wifi_retries++;
@@ -53,10 +65,11 @@ void setup() {
     Serial.println("\nWiFi Connected!");
     Serial.print("IP Address: ");
     Serial.println(WiFi.localIP());
+    digitalWrite(LED_BUILTIN, LOW); // LED ON for successful connection - it is inverted
   } else {
     Serial.println("\nWiFi Connection Failed! Remote control will not work.");
+    digitalWrite(LED_BUILTIN, HIGH);  // LED OFF for failed connection - it is inverted
     // Proceeding, but remote mode will be non-functional without WiFi.
-    // Consider a fallback or error state here if WiFi is absolutely critical.
   }
 
   // --- Initialize Control Modes ---
@@ -67,11 +80,8 @@ void setup() {
   Serial.println("All systems initialized.");
 
   // --- Default Operating Mode ---
-  // currentOperatingMode is already set to REMOTE_CONTROL by default.
-  // If you wanted to start in MAIN_MENU for debugging, you'd change the default.
   if (currentOperatingMode == REMOTE_CONTROL) {
     Serial.println("Entering Remote Control Mode by default.");
-    // setupRemoteControl() already printed its ready messages.
   } else if (currentOperatingMode == MAIN_MENU) {
     printMainMenuHelp();
   }
@@ -113,21 +123,11 @@ void loop() {
       printMainMenuHelp();
       break;
   }
-
-  // Simple loop timing print for performance monitoring (optional)
-  unsigned long endMicros = micros();
-  // if (currentOperatingMode == REMOTE_CONTROL) { // Only print if relevant
-  //   Serial.printf("Loop time: %lu us\n", endMicros - startMicros);
-  // }
-  lastLoopTimeMicros = startMicros; // For dt calculation if needed globally
-
-  // A small delay can be useful if loops are too fast and unthrottled,
-  // but remote_control_update will likely have its own effective rate.
-  // delay(1);
+  lastLoopTimeMicros = startMicros; 
 }
 
 // #############################################################################
-// ### MAIN MENU SERIAL COMMANDS ### (Keep this for fallback)
+// ### MAIN MENU SERIAL COMMANDS ###
 void printMainMenuHelp() {
   Serial.println("\n===== Main Menu =====");
   Serial.println("Enter command:");
@@ -147,16 +147,12 @@ bool processMainMenuCommands() {
     switch (command) {
       case 'R':
         Serial.println("Transitioning to Remote Control Mode...");
-        // setupRemoteControl(); // Should be robust to re-entry or already setup
         currentOperatingMode = REMOTE_CONTROL;
-        // remote_control specific "entering mode" messages are handled by setupRemoteControl
-        // or when the first packet is received.
         break;
       case 'T':
         Serial.println("Transitioning to Servo Test Mode...");
-        // setupServoTestMode(); // Already called in main setup, prints help
         currentOperatingMode = SERVO_TEST;
-        printServoTestHelp_STM(); // Re-print help for this mode
+        printServoTestHelp_STM(); 
         break;
       case 'H':
       case '?':
