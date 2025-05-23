@@ -1,7 +1,9 @@
-//#define OSSIAN_HEMMA
-// HexapodESP32.ino (or your main sketch file)
+#define GUESTNET
+// hexapod_proj.ino
+
 // #############################################################################
 // ### LIBRARIES ###
+#include "passwords.h"          // For WiFi credentials
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include "servo_angles.h"       // For setupPwm, servo control
@@ -9,7 +11,6 @@
 #include "remote_control.h"     // Handles all remote operations
 #include "servo_test_mode.h"    // For the servo test mode
 #include "walkcycle.h"          // For basic walk cycle setup if needed by remote_control
-#include "passwords.h"          // For WiFi credentials
 
 // #############################################################################
 // ### DEFINES AND GLOBAL VARIABLES ###

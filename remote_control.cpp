@@ -774,26 +774,33 @@ static void parseAndStoreMobileAppInput(const JsonDocument& doc) {
 }
 
 static void translateMobileInputsToActiveIntents() {
+  // Locomotion X/Y from joystick (walking forward/backward/strafing)
   active_target_vy_factor = clampf(app_raw_joystick_y, -1.0f, 1.0f);
   active_target_vx_factor = clampf(app_raw_joystick_x, -1.0f, 1.0f);
 
+  // Locomotion Yaw (continuous turning speed while walking)
   if (fabs(app_raw_steering_angle_deg) > 0.1f) {
     active_target_yaw_factor = clampf(app_raw_steering_angle_deg / 90.0f, -1.0f, 1.0f);
-  } else if (app_hold_yaw_plus) {
-    active_target_yaw_factor = 1.0f;
-  } else if (app_hold_yaw_minus) {
-    active_target_yaw_factor = -1.0f;
   } else {
-    active_target_yaw_factor = 0.0f;
+    active_target_yaw_factor = 0.0f; // If steering wheel is not active, no continuous turning from app
   }
 
+  // Body Pose Offset Directions (adjusting body's static position/orientation)
+  // XY Offset (from dpad_xy)
   active_offset_y_direction = (app_hold_dpad_xy_up ? 1.0f : 0.0f) + (app_hold_dpad_xy_down ? -1.0f : 0.0f);
   active_offset_x_direction = (app_hold_dpad_xy_left ? -1.0f : 0.0f) + (app_hold_dpad_xy_right ? 1.0f : 0.0f);
+  
+  // Z Offset (from body_z up/down buttons)
   active_offset_z_direction = (app_hold_body_z_up ? 1.0f : 0.0f) + (app_hold_body_z_down ? -1.0f : 0.0f);
 
+  // Pitch and Roll (from dpad_rot)
   active_pitch_direction = (app_hold_dpad_rot_pitch_up ? 1.0f : 0.0f) + (app_hold_dpad_rot_pitch_down ? -1.0f : 0.0f);
   active_roll_direction = (app_hold_dpad_rot_roll_left ? -1.0f : 0.0f) + (app_hold_dpad_rot_roll_right ? 1.0f : 0.0f);
   
+  // Body Yaw (static orientation adjustment - from yaw+/yaw- buttons)
+  active_body_yaw_direction = (app_hold_yaw_plus ? 1.0f : 0.0f) + (app_hold_yaw_minus ? -1.0f : 0.0f);
+
+  // Centering intents
   active_centering_xy = app_hold_center_xy;
   active_centering_orientation = app_hold_center_rot;
 }

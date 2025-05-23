@@ -31,7 +31,7 @@ DEFAULT_ROBOT_UDP_PORT = 5005
 DEFAULT_GUI_TELEMETRY_LISTEN_IP = "0.0.0.0"
 DEFAULT_GUI_TELEMETRY_LISTEN_PORT = 5007
 DEFAULT_GUI_DISCOVERY_LISTEN_PORT = 5008
-DEFAULT_UPDATE_FREQUENCY_HZ = 20.0
+DEFAULT_UPDATE_FREQUENCY_HZ = 5.0
 MIN_UPDATE_FREQUENCY_HZ = 5.0
 MAX_UPDATE_FREQUENCY_HZ = 50.0
 
@@ -112,9 +112,9 @@ class DiscoveryReceiverUDP(QObject):
             except socket.timeout:
                 continue
             except Exception as e:
-                if self.running:
+                if self.running:  # Only log if we expected to be running
                     print(f"[ERROR UDP Discovery RX] Socket error: {e}")
-                break
+                break  # Exit loop on other errors
         if self.sock:
             self.sock.close()
             self.sock = None
@@ -171,9 +171,9 @@ class TelemetryReceiverUDP(QObject):
             except socket.timeout:
                 continue
             except Exception as e:
-                if self.running:
+                if self.running:  # Only log if we expected to be running
                     print(f"[ERROR UDP RX] Socket error: {e}")
-                break
+                break  # Exit loop on other errors
         if self.sock:
             self.sock.close()
             self.sock = None
@@ -194,6 +194,8 @@ class MjpegStreamWorker(QObject):
     finished = Signal()
     _is_running = False
     _stream_url = ""
+    _session = None  # Store session at class level for potential reuse/closure
+    _response = None  # Store response at class level
 
     @Slot(str)
     def set_url(self, url):
@@ -207,73 +209,108 @@ class MjpegStreamWorker(QObject):
             return
 
         self._is_running = True
-        print(f"MJPEG Worker: Attempting to connect to stream: {self._stream_url}")
-        session = requests.Session()
+        self.log_to_terminal(f"MJPEG Worker: Attempting to connect to stream: {self._stream_url}")
+        self._session = requests.Session()
         try:
             headers = {'User-Agent': 'Python Hexapod GUI MJPEG Client'}
-            response = session.get(self._stream_url, stream=True, timeout=(5, 10), headers=headers)
-            response.raise_for_status()
-            print("MJPEG Worker: Connected to stream.")
+            self._response = self._session.get(self._stream_url, stream=True, timeout=(5, 10), headers=headers)
+            self._response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
+            self.log_to_terminal("MJPEG Worker: Connected to stream.")
 
             frame_data = b''
             full_boundary_bytes = b'--' + MJPEG_BOUNDARY_BYTES
 
-            for chunk in response.iter_content(chunk_size=8192):
+            for chunk in self._response.iter_content(chunk_size=8192):  # iterate over data
                 if not self._is_running:
-                    print("MJPEG Worker: Stream stop requested.")
+                    self.log_to_terminal("MJPEG Worker: Stream stop requested in iter_content loop.")
                     break
                 frame_data += chunk
-                while self._is_running:
+
+                while self._is_running:  # Process all complete frames in the current buffer
                     boundary_start_pos = frame_data.find(full_boundary_bytes)
-                    if boundary_start_pos == -1: break
+                    if boundary_start_pos == -1: break  # Need more data
+
                     boundary_line_end_pos = frame_data.find(b'\r\n', boundary_start_pos)
                     if boundary_line_end_pos == -1: boundary_line_end_pos = frame_data.find(b'\n', boundary_start_pos)
                     if boundary_line_end_pos == -1: break
+
                     headers_start_pos = boundary_line_end_pos + (
                         2 if frame_data[boundary_line_end_pos:boundary_line_end_pos + 2] == b'\r\n' else 1)
+
                     jpeg_data_start_pos_after_headers = frame_data.find(b'\r\n\r\n', headers_start_pos)
                     header_delimiter_len = 4
                     if jpeg_data_start_pos_after_headers == -1:
                         jpeg_data_start_pos_after_headers = frame_data.find(b'\n\n', headers_start_pos)
                         header_delimiter_len = 2
                     if jpeg_data_start_pos_after_headers == -1: break
+
                     actual_jpeg_data_start = jpeg_data_start_pos_after_headers + header_delimiter_len
                     next_boundary_start_pos = frame_data.find(full_boundary_bytes, actual_jpeg_data_start)
                     if next_boundary_start_pos == -1: break
+
                     jpeg_bytes = frame_data[actual_jpeg_data_start:next_boundary_start_pos]
                     frame_data = frame_data[next_boundary_start_pos:]
+
+                    if not self._is_running:  # Check again after parsing, before emitting
+                        self.log_to_terminal("MJPEG Worker: Stream stop requested before emitting frame.")
+                        break
+
                     if jpeg_bytes:
                         try:
                             q_image = QImage()
                             if q_image.loadFromData(jpeg_bytes, "JPEG") and not q_image.isNull():
                                 self.new_frame_signal.emit(q_image)
+                            # else: self.log_to_terminal(f"MJPEG Worker: QImage.loadFromData failed or image isNull. Bytes: {len(jpeg_bytes)}")
                         except Exception as e:
-                            print(f"MJPEG Worker: Error converting JPEG to QImage: {e}")
-            if self._is_running and response:
-                self.stream_error_signal.emit("Stream ended or connection lost.")
-            print("MJPEG Worker: Stream loop finished.")
+                            self.log_to_terminal(f"MJPEG Worker: Error converting JPEG to QImage: {e}")
+
+                if not self._is_running:  # If inner loop broke due to stop_stream
+                    self.log_to_terminal("MJPEG Worker: Inner loop broken due to stop request, breaking outer.")
+                    break
+
+            # After for loop finishes or breaks:
+            if self._is_running and self._response:  # This means loop exited for reason other than stop_stream or normal end
+                self.stream_error_signal.emit("Stream ended or connection lost by server.")
+            self.log_to_terminal("MJPEG Worker: Stream loop finished.")
+
         except requests.exceptions.ConnectionError as e:
             if self._is_running: self.stream_error_signal.emit(
                 f"Stream Connection Error: {e}. Check IP/Port: {self._stream_url}")
         except requests.exceptions.Timeout:
             if self._is_running: self.stream_error_signal.emit(f"Stream Connection Timeout for {self._stream_url}")
-        except requests.exceptions.RequestException as e:
+        except requests.exceptions.RequestException as e:  # Catches HTTPError from raise_for_status too
             if self._is_running: self.stream_error_signal.emit(f"Stream request error: {e} for {self._stream_url}")
+        except Exception as e:  # Catch any other unexpected error in worker
+            if self._is_running: self.stream_error_signal.emit(f"MJPEG Worker: Unexpected error: {e}")
+            self.log_to_terminal(f"MJPEG Worker: CRITICAL UNEXPECTED ERROR: {e}")
         finally:
-            if 'response' in locals() and response: response.close()
-            if 'session' in locals() and session: session.close()
-            self._is_running = False
+            self.log_to_terminal("MJPEG Worker: In finally block.")
+            if self._response:
+                self._response.close()
+                self._response = None
+                self.log_to_terminal("MJPEG Worker: Response closed.")
+            if self._session:
+                self._session.close()
+                self._session = None
+                self.log_to_terminal("MJPEG Worker: Session closed.")
+            self._is_running = False  # Ensure flag is reset
             self.finished.emit()
-            print("MJPEG Worker: Cleanup complete, finished emitted.")
+            self.log_to_terminal("MJPEG Worker: Cleanup complete, finished emitted.")
 
     def stop_stream(self):
+        self.log_to_terminal("MJPEG Worker: stop_stream() called.")
         self._is_running = False
+        # Attempt to close response/session here might be risky if called from different thread
+        # Rely on the main loop checking _is_running and cleaning up in finally.
+
+    def log_to_terminal(self, message):  # Helper for worker logging
+        print(message)  # Worker logs to console
 
 
 class HexapodControllerGUI(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Hexapod Controller GUI v2.2 (TCP/UDP + Discovery + MJPEG)")
+        self.setWindowTitle("Hexapod Controller GUI v2.2.1 (TCP/UDP + Discovery + MJPEG)")
         self.setGeometry(30, 30, 1600, 950)  # Adjusted width for more columns
 
         self.comms_client = None
@@ -395,12 +432,12 @@ class HexapodControllerGUI(QMainWindow):
         self.video_resolution_combo = QComboBox()
         self.video_resolution_combo.addItems(
             [FRAMESIZE_STR_QQVGA, FRAMESIZE_STR_HQVGA, FRAMESIZE_STR_QVGA, FRAMESIZE_STR_CIF, FRAMESIZE_STR_VGA])
-        self.video_resolution_combo.setCurrentText(FRAMESIZE_STR_QVGA)
+        self.video_resolution_combo.setCurrentText(FRAMESIZE_STR_QQVGA)
         video_config_form.addRow("Resolution:", self.video_resolution_combo)
         self.video_quality_spin = QSpinBox();
         self.video_quality_spin.setRange(0, 63);
-        self.video_quality_spin.setValue(12)
-        video_config_form.addRow("JPEG Quality (0-63):", self.video_quality_spin)
+        self.video_quality_spin.setValue(20)
+        video_config_form.addRow("JPEG Quality (0-63), 63 is worst:", self.video_quality_spin)
         self.video_fps_spin = QSpinBox();
         self.video_fps_spin.setRange(0, 30);
         self.video_fps_spin.setValue(10)
@@ -547,7 +584,7 @@ class HexapodControllerGUI(QMainWindow):
         self.cfg_max_yaw_rate_input.setDecimals(2)
         config_speeds_form.addRow("Max Yaw Rate (rad/s):", self.cfg_max_yaw_rate_input)
         self.cfg_pose_linear_speed_input = QDoubleSpinBox();
-        self.cfg_pose_linear_speed_input.setRange(0.1, 10)
+        self.cfg_pose_linear_speed_input.setRange(0.1, 1000)
         config_speeds_form.addRow("Pose Adjust Lin Spd (cm/s):", self.cfg_pose_linear_speed_input)
         self.cfg_pose_angular_speed_input = QDoubleSpinBox();
         self.cfg_pose_angular_speed_input.setRange(1, 90)
@@ -604,7 +641,7 @@ class HexapodControllerGUI(QMainWindow):
         col5_layout = QVBoxLayout(col5_widget)
         robot_telemetry_group = QGroupBox("Robot Telemetry (from TCP)")  # Renamed and moved
         robot_telemetry_form = QFormLayout(robot_telemetry_group)
-        robot_telemetry_form.addRow("Battery Voltage:", self.actual_battery_voltage_label)
+        robot_telemetry_form.addRow("Battery Voltage (do not trust):", self.actual_battery_voltage_label)
         robot_telemetry_form.addRow("Robot Status:", self.actual_robot_status_label)
         col5_layout.addWidget(robot_telemetry_group)
         actual_state_group = QGroupBox("Robot Actual State (from Telemetry)")
@@ -811,14 +848,20 @@ class HexapodControllerGUI(QMainWindow):
             self.comms_client.tcp_disconnected_signal.connect(self.handle_tcp_conn_loss)
             self.comms_client.tcp_message_received_signal.connect(self.handle_tcp_message_from_esp)
             self.comms_client.rtt_updated_signal.connect(self.handle_rtt_update)
-            if not self.comms_client.connect_tcp(): pass  # handle_tcp_conn_loss will be called
+            if not self.comms_client.connect_tcp():
+                # handle_tcp_conn_loss will be called via signal from CommsClient if connect_tcp fails
+                # and it will re-enable the connect button.
+                self.log_to_terminal("Connection attempt failed in toggle_connection.")
+                # Ensure button is re-enabled if connect_tcp fails silently or before signal emission path completes fully
+                # self.set_ui_for_disconnected_state() # Redundant if signal path is robust
+                pass
         else:  # Disconnect
             self.log_to_terminal("Disconnecting...")
             self._stop_mjpeg_display_logic(send_stop_command=True)  # Stop stream before full disconnect
             if self.comms_client:
                 self.comms_client.send_disconnect_notice();
-                time.sleep(0.05)
-                self.comms_client.close();
+                time.sleep(0.05)  # Give notice time to send
+                self.comms_client.close();  # This calls comms_client.disconnect_tcp()
                 self.comms_client = None
             self.udp_intent_timer.stop()
             self.udp_telemetry_receiver.stop_listening()
@@ -833,7 +876,7 @@ class HexapodControllerGUI(QMainWindow):
         self.set_ui_for_connected_but_unsynced_state()  # This enables connect button with "Disconnect" text
         self.udp_telemetry_receiver.start_listening()
         self.send_client_settings_to_robot();
-        time.sleep(0.05)
+        time.sleep(0.05)  # Allow time for settings to be processed
         self.request_full_state_from_robot()
         self.update_udp_intent_timer_interval();
         self.udp_intent_timer.start()
@@ -844,12 +887,16 @@ class HexapodControllerGUI(QMainWindow):
         self.connection_status_label.setText(f"Status: TCP Error - {reason}");
         self.connection_status_label.setStyleSheet("color: red")
         self.rtt_label.setText("RTT: N/A ms")
-        self._stop_mjpeg_display_logic(send_stop_command=False)  # Stream is implicitly dead
+        self._stop_mjpeg_display_logic(send_stop_command=False)  # Stream is implicitly dead or should be stopped
         self.udp_intent_timer.stop()
-        if self.comms_client: self.comms_client.close(); self.comms_client = None
+        if self.comms_client:
+            # CommsClient's disconnect_tcp should handle its internal cleanup.
+            # We just need to nullify our reference and stop GUI-side things.
+            # self.comms_client.close() # This is likely already called or will be if disconnect_tcp path is robust
+            self.comms_client = None  # Nullify the reference
+
         self.udp_telemetry_receiver.stop_listening()
         self.set_ui_for_disconnected_state()  # This re-enables connect button with "Connect" text and discover
-        # Connect button already re-enabled by set_ui_for_disconnected_state
 
     @Slot(float)
     def handle_rtt_update(self, rtt_ms: float):
@@ -857,9 +904,12 @@ class HexapodControllerGUI(QMainWindow):
 
     @Slot(dict)
     def handle_tcp_message_from_esp(self, message_json: dict):
-        self.log_to_terminal(f"RX TCP: {json.dumps(message_json)}")
+        # Potentially large messages, log only type or summary for some
         msg_type = message_json.get("type");
         payload = message_json.get("payload")
+        if msg_type != "pong":  # Avoid logging frequent pongs if any slip through
+            self.log_to_terminal(
+                f"RX TCP: Type='{msg_type}', PayloadKeys={list(payload.keys()) if payload else 'None'}")
 
         if msg_type == "full_state_response" and payload:
             self.populate_gui_from_full_state(payload)
@@ -883,21 +933,20 @@ class HexapodControllerGUI(QMainWindow):
             success = payload.get("success", False)
             if action == "start" and success:
                 self.log_to_terminal("ESP32 ACKed camera stream start. Initiating display.")
-                self._start_mjpeg_display_logic()
-                self.video_stacked_widget.setCurrentIndex(1)  # Show stream view
+                self._start_mjpeg_display_logic()  # This will switch UI to stream view
             elif action == "start" and not success:
                 self.log_to_terminal(f"ESP32 NACKed camera stream start: {payload.get('message', 'No details')}")
                 self.video_start_stream_button.setEnabled(True);
                 self.video_apply_config_button.setEnabled(True)  # Re-enable
             elif action == "stop" and success:
-                self.log_to_terminal("ESP32 ACKed camera stream stop.")
-                # _stop_mjpeg_display_logic should have been called by the button, this is confirmation
-                self.video_stacked_widget.setCurrentIndex(0)  # Show config view
-                self.video_start_stream_button.setEnabled(True);
-                self.video_apply_config_button.setEnabled(True)
+                self.log_to_terminal("ESP32 ACKed camera stream stop. UI should reflect this.")
+                # _stop_mjpeg_display_logic was called by button, which updates UI. This ACK confirms.
+                # on_stream_thread_finished (called by worker finishing) will ensure UI is on config view
             elif action == "stop" and not success:
                 self.log_to_terminal(f"ESP32 NACKed camera stream stop: {payload.get('message', 'No details')}")
-                # Stream might still be running on ESP, but UI will be reset if stop was called
+                # If stop failed on ESP, stream might still be running there.
+                # Local UI should still be reset by _stop_mjpeg_display_logic
+                self.on_stream_thread_finished()  # Ensure UI is reset to config state
         elif msg_type == "camera_config_ack" and payload:
             success = payload.get("success", False)
             if success:
@@ -1058,6 +1107,8 @@ class HexapodControllerGUI(QMainWindow):
 
     @Slot()
     def send_active_intents_udp(self):
+        current_time = time.time()
+        self.log_to_terminal(f"DEBUG: send_active_intents_udp called at {current_time:.3f}")  # Log when method is called
         if not self.comms_client or not self.comms_client.is_tcp_connected(): return
         self.comms_client.send_locomotion_intent(self.loco_intent_vx_factor, self.loco_intent_vy_factor,
                                                  self.loco_intent_yaw_factor)
@@ -1179,17 +1230,25 @@ class HexapodControllerGUI(QMainWindow):
     def send_camera_start_stream_command_tcp(self):
         if self.comms_client and self.comms_client.is_tcp_connected():
             self.log_to_terminal("TX TCP: Requesting camera stream START.")
-            if self.comms_client.send_camera_stream_control("start"):
-                self.video_start_stream_button.setEnabled(False)  # Disable until ACK
-                self.video_apply_config_button.setEnabled(False)
-            else:
-                self.log_to_terminal("Failed to send camera stream start command.")
+            # Disable buttons until ACK or error
+            self.video_start_stream_button.setEnabled(False)
+            self.video_apply_config_button.setEnabled(False)
+            if not self.comms_client.send_camera_stream_control("start"):
+                self.log_to_terminal(
+                    "Failed to send camera stream start command (send_camera_stream_control returned False).")
+                # Re-enable buttons if send failed immediately (e.g. TCP disconnected during send)
+                if self.comms_client and self.comms_client.is_tcp_connected():  # Check if still connected
+                    self.video_start_stream_button.setEnabled(True);
+                    self.video_apply_config_button.setEnabled(True)
+                else:  # Disconnected, UI should reflect this broadly
+                    self.on_stream_thread_finished()  # Reset camera UI part
         else:
             self.log_to_terminal("Cannot start camera stream: Not connected.")
 
     @Slot()
     def send_camera_stop_stream_command_tcp(self):
-        self._stop_mjpeg_display_logic(send_stop_command=True)  # This will also update UI
+        self.log_to_terminal("GUI: User requested STOP stream.")
+        self._stop_mjpeg_display_logic(send_stop_command=True)
 
     @Slot()
     def send_camera_config_command_tcp(self):
@@ -1198,16 +1257,19 @@ class HexapodControllerGUI(QMainWindow):
             qual = self.video_quality_spin.value()
             fps = self.video_fps_spin.value()
             self.log_to_terminal(f"TX TCP: Sending camera config: Res={res}, Q={qual}, FPS={fps}")
-            if self.comms_client.send_camera_config_update(res, qual, fps):
-                self.video_apply_config_button.setEnabled(False)  # Disable until ACK
-            else:
-                self.log_to_terminal("Failed to send camera config update command.")
+            self.video_apply_config_button.setEnabled(False)  # Disable until ACK
+            if not self.comms_client.send_camera_config_update(res, qual, fps):
+                self.log_to_terminal(
+                    "Failed to send camera config update command (send_camera_config_update returned False).")
+                if self.comms_client and self.comms_client.is_tcp_connected():
+                    self.video_apply_config_button.setEnabled(True)  # Re-enable if still connected
+                # If disconnected, broad UI update will occur
         else:
             self.log_to_terminal("Cannot send camera config: Not connected.")
 
     def _start_mjpeg_display_logic(self):
         if self._stream_thread and self._stream_thread.isRunning():
-            self.log_to_terminal("MJPEG display thread already running.")
+            self.log_to_terminal("MJPEG display thread already running or starting.")
             return
 
         robot_ip = self.robot_ip_input.text()
@@ -1220,16 +1282,19 @@ class HexapodControllerGUI(QMainWindow):
         self.log_to_terminal(f"Initializing MJPEG display thread for URL: {stream_url}")
 
         self._stream_thread = QThread(self)
+        self._stream_thread.setObjectName("MjpegStreamThread")  # For debugging
         self._stream_worker = MjpegStreamWorker()
         self._stream_worker.moveToThread(self._stream_thread)
         self._stream_worker.set_url(stream_url)
 
         self._stream_worker.new_frame_signal.connect(self.update_video_frame)
         self._stream_worker.stream_error_signal.connect(self.handle_stream_error)
+
         self._stream_worker.finished.connect(self._stream_thread.quit)
+        # Ensure deleteLater is called for both worker and thread when thread is finished
         self._stream_thread.finished.connect(self._stream_worker.deleteLater)
-        self._stream_thread.finished.connect(self._stream_thread.deleteLater)  # Schedule thread for deletion
-        self._stream_thread.finished.connect(self.on_stream_thread_finished)  # Cleanup ref
+        self._stream_thread.finished.connect(self._stream_thread.deleteLater)
+        self._stream_thread.finished.connect(self.on_stream_thread_finished)  # GUI cleanup slot
 
         self._stream_thread.started.connect(self._stream_worker.start_stream)
         self._stream_thread.start()
@@ -1238,72 +1303,114 @@ class HexapodControllerGUI(QMainWindow):
         self.video_stacked_widget.setCurrentIndex(1)  # Switch to stream view
 
     def _stop_mjpeg_display_logic(self, send_stop_command=True):
+        self.log_to_terminal(f"GUI: _stop_mjpeg_display_logic called (send_stop_command={send_stop_command})")
+
         if send_stop_command and self.comms_client and self.comms_client.is_tcp_connected():
-            self.log_to_terminal("TX TCP: Requesting camera stream STOP.")
-            self.comms_client.send_camera_stream_control("stop")  # ACK will handle UI final state
+            self.log_to_terminal("TX TCP: Requesting camera stream STOP via _stop_mjpeg_display_logic.")
+            if not self.comms_client.send_camera_stream_control("stop"):
+                self.log_to_terminal("Failed to send camera stream stop command to ESP32.")
 
+        # Signal worker to stop its processing loop
         if self._stream_worker:
-            self.log_to_terminal("Signaling MJPEG worker to stop...")
-            self._stream_worker.stop_stream()
+            self.log_to_terminal("Signaling MJPEG worker to stop its loop...")
+            self._stream_worker.stop_stream()  # This sets the worker's _is_running to False
 
+        # Wait for the thread to finish gracefully
         if self._stream_thread and self._stream_thread.isRunning():
-            self.log_to_terminal("Waiting for MJPEG display thread to quit...")
-            if not self._stream_thread.wait(2000):
-                self.log_to_terminal("Warning: MJPEG display thread did not quit gracefully. Terminating.")
-                self._stream_thread.terminate();
-                self._stream_thread.wait()
-            # on_stream_thread_finished will nullify refs
-        else:  # If thread wasn't running or already gone
-            self.on_stream_thread_finished()  # Ensure UI reset and nullification
+            self.log_to_terminal("Waiting for MJPEG display thread to quit (max 2s)...")
+            if not self._stream_thread.wait(2000):  # Wait up to 2 seconds
+                self.log_to_terminal("Warning: MJPEG display thread did not quit gracefully within timeout.")
+                # Do NOT terminate. Rely on worker's finally block and finished signal.
+            else:
+                self.log_to_terminal("MJPEG display thread quit gracefully.")
+        else:
+            self.log_to_terminal("MJPEG display thread not running or already gone.")
+            # If thread wasn't running, but worker/thread objects might exist,
+            # ensure UI cleanup is triggered if it hasn't been by the thread.finished signal
+            if self._stream_thread is not None or self._stream_worker is not None:
+                self.on_stream_thread_finished()  # Manually trigger UI cleanup
+
+        # The on_stream_thread_finished slot (connected to thread.finished) will handle
+        # nullifying _stream_thread, _stream_worker, and resetting UI elements.
 
     @Slot(QImage)
     def update_video_frame(self, q_image: QImage):
-        if not q_image.isNull():
+        if not q_image.isNull() and self.video_label.isVisible():  # Check if label is visible
+            # Use FastTransformation for potentially better performance with laggy streams
             pixmap = QPixmap.fromImage(q_image)
-            self.video_label.setPixmap(pixmap.scaled(self.video_label.size(), Qt.AspectRatioMode.KeepAspectRatio,
-                                                     Qt.TransformationMode.SmoothTransformation))
-        # else: self.log_to_terminal("Received null QImage.") # Can be spammy
+            self.video_label.setPixmap(pixmap.scaled(
+                self.video_label.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.FastTransformation  # Changed to FastTransformation
+            ))
+        # else: self.log_to_terminal("Received null QImage or label not visible.")
 
     @Slot(str)
     def handle_stream_error(self, error_msg: str):
         self.log_to_terminal(f"Stream Display Error: {error_msg}")
         self.video_label.setText(f"Stream Error:\n{error_msg}");
         self.video_label.setStyleSheet("background-color: darkred; color: white;")
-        # This error means the worker loop exited, so thread should finish.
-        # If it's called, it implies _stop_mjpeg_display_logic might not be needed if it was an unexpected error.
-        # However, ensure UI reset.
+        # Worker's finished signal will trigger on_stream_thread_finished for full cleanup.
+        # This slot is just for updating the error message.
+        # However, if the error means the stream is dead, ensure the UI reflects this sooner.
         if self.video_stacked_widget.currentIndex() == 1:  # If we were in stream view
-            self.video_stacked_widget.setCurrentIndex(0)  # Switch back to config
-            if self.comms_client and self.comms_client.is_tcp_connected():
-                self.video_start_stream_button.setEnabled(True);
-                self.video_apply_config_button.setEnabled(True)
+            self.on_stream_thread_finished()  # Force UI reset to config state
 
     @Slot()
     def on_stream_thread_finished(self):
-        self.log_to_terminal("MJPEG display thread has finished.")
-        self._stream_thread = None  # Nullify reference
-        self._stream_worker = None  # Nullify reference
+        # This slot is connected to self._stream_thread.finished
+        self.log_to_terminal("GUI: on_stream_thread_finished triggered.")
+
+        # Nullify references to allow QObject's deleteLater to work without dangling Python refs
+        self._stream_thread = None
+        self._stream_worker = None
+
+        # Reset UI elements related to the stream
         if self.video_stacked_widget.currentIndex() == 1:  # If we were in stream view
             self.video_stacked_widget.setCurrentIndex(0)  # Switch back to config
-        if self.comms_client and self.comms_client.is_tcp_connected():  # Re-enable buttons if connected
+
+        # Re-enable config/start buttons only if TCP is still connected
+        if self.comms_client and self.comms_client.is_tcp_connected():
             self.video_start_stream_button.setEnabled(True)
             self.video_apply_config_button.setEnabled(True)
+            self.video_resolution_combo.setEnabled(True)
+            self.video_quality_spin.setEnabled(True)
+            self.video_fps_spin.setEnabled(True)
+        else:  # If TCP is not connected, keep them disabled
+            self.video_start_stream_button.setEnabled(False)
+            self.video_apply_config_button.setEnabled(False)
+            self.video_resolution_combo.setEnabled(False)
+            self.video_quality_spin.setEnabled(False)
+            self.video_fps_spin.setEnabled(False)
+
         self.video_label.setText("Stream stopped/offline.");
         self.video_label.setStyleSheet("background-color: black; color: gray;")
+        self.log_to_terminal("GUI: MJPEG stream UI reset and references cleared.")
 
     def closeEvent(self, event: QCloseEvent):
         self.log_to_terminal("Close event: Shutting down...")
-        self._stop_mjpeg_display_logic(send_stop_command=True)  # Attempt to stop ESP stream
+
+        # Attempt to stop ESP32 stream if connected
+        if self.comms_client and self.comms_client.is_tcp_connected():
+            self.log_to_terminal("CloseEvent: Sending camera stream stop command.")
+            self.comms_client.send_camera_stream_control("stop")
+            time.sleep(0.05)  # Give it a moment
+            self.log_to_terminal("CloseEvent: Sending disconnect notice.")
+            self.comms_client.send_disconnect_notice()
+            time.sleep(0.1)  # Give it a moment
+
+        # Stop local MJPEG display thread
+        self._stop_mjpeg_display_logic(send_stop_command=False)  # Don't resend stop command to ESP
+
         self.udp_intent_timer.stop()
         self.udp_telemetry_receiver.stop_listening()
         self.udp_discovery_receiver.stop_listening()
 
         if self.comms_client:
-            if self.comms_client.is_tcp_connected():
-                self.comms_client.send_disconnect_notice();
-                time.sleep(0.1)
-            self.comms_client.close();
+            self.comms_client.close();  # This calls disconnect_tcp internally
             self.comms_client = None
+
+        self.log_to_terminal("Shutdown procedures complete.")
         event.accept()
 
 

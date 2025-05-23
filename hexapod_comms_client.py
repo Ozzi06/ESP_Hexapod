@@ -6,7 +6,7 @@ from PySide6.QtCore import QObject, Signal, QTimer
 
 DEFAULT_ESP32_TCP_PORT = 5006
 DEFAULT_ESP32_UDP_PORT = 5005
-DEFAULT_ESP32_MJPEG_PORT = 81 # For camera stream
+DEFAULT_ESP32_MJPEG_PORT = 81  # For camera stream
 PING_INTERVAL_MS = 2000
 PONG_TIMEOUT_MS = 3000  # Should be > PING_INTERVAL_MS slightly, or independent
 
@@ -81,7 +81,7 @@ class HexapodCommsClient(QObject):
                             return ip_addr
                     return socket.gethostbyname(hostname)
                 except socket.gaierror:
-                    return socket.gethostbyname(hostname) # Fallback
+                    return socket.gethostbyname(hostname)  # Fallback
             return local_ip
         except Exception:
             try:
@@ -104,7 +104,7 @@ class HexapodCommsClient(QObject):
             self.tcp_socket.settimeout(3.0)
             print(f"[CommsClient] Attempting TCP connection to {self.robot_tcp_addr}...")
             self.tcp_socket.connect(self.robot_tcp_addr)
-            self.tcp_socket.settimeout(1.0)
+            self.tcp_socket.settimeout(1.0)  # Shorter timeout for regular operations
 
             self._is_tcp_connected = True
             self.sent_udp_telemetry_path_setup = False
@@ -120,52 +120,63 @@ class HexapodCommsClient(QObject):
             return True
         except socket.timeout:
             print(f"[CommsClient ERROR] TCP connection to {self.robot_tcp_addr} timed out.")
-            self.disconnect_tcp()
+            self.disconnect_tcp()  # This will be called, but ensure it's robust
             self.tcp_disconnected_signal.emit(f"Connection Timeout to {self.robot_tcp_addr}")
             return False
         except Exception as e:
             print(f"[CommsClient ERROR] TCP connection failed: {e}")
-            self.disconnect_tcp()
+            self.disconnect_tcp()  # This will be called, but ensure it's robust
             self.tcp_disconnected_signal.emit(f"Connection Error: {e}")
             return False
 
     def _tcp_receive_loop(self):
+        print("[CommsClient DEBUG] TCP receive loop started.")
         while self._is_tcp_connected and not self.tcp_receive_stop_event.is_set():
             try:
                 if not self.tcp_socket:
+                    print("[CommsClient DEBUG] TCP socket is None in receive loop. Exiting.")
                     break
 
                 data = self.tcp_socket.recv(2048)
 
                 if not data:
                     print("[CommsClient] TCP connection closed by ESP32 (recv empty data).")
-                    if self._is_tcp_connected:
-                        self.tcp_disconnected_signal.emit("Connection closed by robot")
-                    self._is_tcp_connected = False
+                    # No need to emit tcp_disconnected_signal here, will be handled by disconnect_tcp logic
+                    self._is_tcp_connected = False  # Mark as not connected first
+                    # self.disconnect_tcp() # Let the main disconnect logic handle this after loop exit
                     break
 
                 self.tcp_receive_buffer += data
                 self._process_tcp_buffer()
 
             except socket.timeout:
+                # This is expected if settimeout is used on the socket for non-blocking checks
                 continue
             except ConnectionResetError:
                 print("[CommsClient ERROR] TCP ConnectionResetError in receive loop.")
-                if self._is_tcp_connected:
-                    self.tcp_disconnected_signal.emit("Connection Reset")
-                self._is_tcp_connected = False
+                self._is_tcp_connected = False  # Mark as not connected first
+                # self.disconnect_tcp()
                 break
             except Exception as e:
-                if self._is_tcp_connected:
+                if self._is_tcp_connected:  # Only print/emit if we thought we were connected
                     print(f"[CommsClient ERROR] TCP receive loop error: {e}")
-                    self.tcp_disconnected_signal.emit(f"Receive Loop Error: {e}")
-                self._is_tcp_connected = False
+                self._is_tcp_connected = False  # Mark as not connected first
+                # self.disconnect_tcp()
                 break
 
-        self.tcp_ping_timer.stop()
-        self.pong_timeout_timer.stop()
-        self._is_tcp_connected = False
-        self.tcp_receive_stop_event.set()
+        print("[CommsClient DEBUG] TCP receive loop trying to exit or has exited.")
+        # If the loop exited due to an error or closed connection, _is_tcp_connected might be false.
+        # disconnect_tcp will handle the full cleanup.
+        # To prevent emitting disconnect signal multiple times, the actual disconnect signal
+        # is usually emitted from connect_tcp (on failure) or from disconnect_tcp, or if an explicit error occurs.
+        # If loop exited due to data being None or ConnectionResetError, we should ensure disconnect is called if not already by another path
+        if not self.tcp_receive_stop_event.is_set():  # If stop wasn't explicitly called
+            # This indicates an unexpected exit from the loop
+            if self.is_tcp_connected():  # if we still think we are connected
+                self.tcp_disconnected_signal.emit("Receive loop terminated unexpectedly")
+            self.disconnect_tcp()  # Ensure full cleanup
+
+        print("[CommsClient DEBUG] TCP receive loop finished.")
 
     def _process_tcp_buffer(self):
         while b'\n' in self.tcp_receive_buffer:
@@ -193,31 +204,59 @@ class HexapodCommsClient(QObject):
                     print(f"[CommsClient ERROR] TCP processing error: {e}. Data: '{line_str}'")
 
     def disconnect_tcp(self):
+        print("[CommsClient DEBUG] disconnect_tcp called.")
+        # Halt sending pings and pong timeouts immediately
         self.tcp_ping_timer.stop()
         self.pong_timeout_timer.stop()
 
+        # Signal the receive loop to stop
         if not self.tcp_receive_stop_event.is_set():
             self.tcp_receive_stop_event.set()
+            print("[CommsClient DEBUG] TCP receive stop event set.")
 
-        self._is_tcp_connected = False
-
-        if self.tcp_socket:
+        # Close the socket
+        current_socket = self.tcp_socket
+        self.tcp_socket = None  # Nullify self.tcp_socket before closing
+        if current_socket:
             try:
-                self.tcp_socket.close()
+                print("[CommsClient DEBUG] Closing TCP socket.")
+                current_socket.shutdown(socket.SHUT_RDWR)  # Gracefully shutdown
+            except (OSError, socket.error) as e:
+                # print(f"[CommsClient WARN] Error during socket shutdown: {e}")
+                pass  # Can happen if socket is already closed/broken
+            try:
+                current_socket.close()
+                print("[CommsClient DEBUG] TCP socket closed.")
             except Exception as e:
                 print(f"[CommsClient WARN] Error closing TCP socket: {e}")
-            self.tcp_socket = None
 
-        if self.tcp_receive_thread and self.tcp_receive_thread.is_alive() and \
-                threading.current_thread() != self.tcp_receive_thread:
-            self.tcp_receive_thread.join(timeout=1.0)
-            if self.tcp_receive_thread.is_alive():
-                print("[CommsClient WARN] TCP receive thread did not join.")
+        # Join the receive thread
+        if self.tcp_receive_thread and self.tcp_receive_thread.is_alive():
+            print(
+                f"[CommsClient DEBUG] Joining TCP receive thread (current: {threading.current_thread().name}, target: {self.tcp_receive_thread.name})...")
+            if threading.current_thread() != self.tcp_receive_thread:
+                self.tcp_receive_thread.join(timeout=1.5)  # Increased timeout slightly
+                if self.tcp_receive_thread.is_alive():
+                    print("[CommsClient WARN] TCP receive thread did not join.")
+            else:
+                print("[CommsClient DEBUG] Cannot join self (TCP receive thread is current thread).")
 
         self.tcp_receive_thread = None
         self.tcp_receive_buffer = b""
 
+        # Set connected flag last after all cleanup, and only if it was previously true
+        if self._is_tcp_connected:
+            self._is_tcp_connected = False
+            # The tcp_disconnected_signal should be emitted by the caller of disconnect_tcp
+            # or by connect_tcp on failure, or by error handlers that also call disconnect_tcp.
+            # Avoid emitting it multiple times.
+            print("[CommsClient] TCP effectively disconnected.")
+        else:
+            print("[CommsClient DEBUG] disconnect_tcp called, but was already marked as disconnected.")
+
     def is_tcp_connected(self) -> bool:
+        # Check our flag and the socket's state if possible
+        # For simplicity, relying on _is_tcp_connected which is managed by connection/disconnection logic
         return self._is_tcp_connected and self.tcp_socket is not None
 
     def _send_udp(self, message_dict: dict):
@@ -228,7 +267,7 @@ class HexapodCommsClient(QObject):
             print(f"[CommsClient ERROR] Failed to send UDP message: {e}\n  Message: {message_dict}")
 
     def _send_tcp(self, message_dict: dict) -> bool:
-        if not self.is_tcp_connected():
+        if not self.is_tcp_connected():  # Check internal flag and socket
             print("[CommsClient WARN] TCP not connected. Cannot send message.")
             return False
         try:
@@ -237,12 +276,12 @@ class HexapodCommsClient(QObject):
             return True
         except socket.timeout:
             print(f"[CommsClient ERROR] TCP sendall timed out.")
-            self.tcp_disconnected_signal.emit("Send Timeout")
+            self.tcp_disconnected_signal.emit("Send Timeout")  # Emit before disconnect
             self.disconnect_tcp()
             return False
-        except Exception as e:
+        except Exception as e:  # Covers BrokenPipeError, ConnectionResetError etc.
             print(f"[CommsClient ERROR] Failed to send TCP message: {e}")
-            self.tcp_disconnected_signal.emit(f"Send Error: {e}")
+            self.tcp_disconnected_signal.emit(f"Send Error: {e}")  # Emit before disconnect
             self.disconnect_tcp()
             return False
 
@@ -281,7 +320,7 @@ class HexapodCommsClient(QObject):
         if leg_geometry_abstract: payload["leg_geometry_abstract"] = leg_geometry_abstract
 
         if not payload:
-            return True # No actual update to send
+            return True  # No actual update to send
         return self._send_tcp({"type": "config_update", "source": "python_gui", "payload": payload})
 
     def send_pwm_reinitialize_command(self):
@@ -298,9 +337,10 @@ class HexapodCommsClient(QObject):
 
     def send_disconnect_notice(self):
         if self.is_tcp_connected():
+            print("[CommsClient DEBUG] Sending disconnect notice.")
             success = self._send_tcp({"type": "disconnect_notice", "source": "python_gui",
                                       "payload": {"source_ip": self.client_ip_for_esp_setup}})
-            time.sleep(0.05)
+            time.sleep(0.05)  # Brief pause to allow message to be sent before socket close
             return success
         return False
 
@@ -311,14 +351,15 @@ class HexapodCommsClient(QObject):
             success = self._send_tcp({"type": "ping", "source": "python_gui", "payload": ping_payload})
             if success:
                 self.pong_timeout_timer.start(PONG_TIMEOUT_MS)
+            # else: _send_tcp handles disconnect on failure, no need to do more here
         else:
-            self.tcp_ping_timer.stop()
+            self.tcp_ping_timer.stop()  # Should already be stopped if not connected
             self.pong_timeout_timer.stop()
 
     def handle_pong_timeout(self):
-        if self.is_tcp_connected():
+        if self.is_tcp_connected():  # Only if we thought we were connected
             print("[CommsClient ERROR] Pong not received within timeout. Disconnecting.")
-            self.tcp_disconnected_signal.emit("Ping Timeout")
+            self.tcp_disconnected_signal.emit("Ping Timeout")  # Emit before disconnect
             self.disconnect_tcp()
 
     # --- Camera Control Commands ---
@@ -350,19 +391,27 @@ class HexapodCommsClient(QObject):
         return self._send_tcp({"type": "camera_config_update", "source": "python_gui", "payload": payload})
 
     def close(self):
+        print("[CommsClient] Closing communications...")
         try:
-            self.send_locomotion_intent(0, 0, 0); time.sleep(0.01)
-            self.send_pose_adjust_intent(0, 0, 0, 0, 0, 0); time.sleep(0.01)
-            self.send_centering_intent(False, False)
-        except Exception:
-            pass # Ignore errors if already disconnected
+            # Send final zero-movement commands if connected
+            if self.is_tcp_connected():  # UDP commands are fire-and-forget, check TCP state
+                self.send_locomotion_intent(0, 0, 0);
+                time.sleep(0.01)
+                self.send_pose_adjust_intent(0, 0, 0, 0, 0, 0);
+                time.sleep(0.01)
+                self.send_centering_intent(False, False)
+        except Exception as e:
+            print(f"[CommsClient WARN] Error sending zeroing commands during close: {e}")
 
-        self.disconnect_tcp()
+        # Send disconnect notice before actively disconnecting TCP
+        # This is now called by GUI's closeEvent if comms_client exists and is connected
+
+        self.disconnect_tcp()  # Stops timers, closes socket, joins thread
 
         if self.udp_socket:
             try:
                 self.udp_socket.close()
             except Exception:
-                pass
+                pass  # Ignore errors on close
             self.udp_socket = None
         print("[CommsClient] Communications closed.")
